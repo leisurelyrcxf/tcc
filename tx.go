@@ -24,3 +24,11 @@ func NewTx(ops []Op) *Tx {
         Ops: ops,
     }
 }
+
+func (tx *Tx) CollectKeys() []string {
+    var keys []string
+    for _, op := range tx.Ops {
+        keys = append(keys, op.key)
+    }
+    return keys
+}
