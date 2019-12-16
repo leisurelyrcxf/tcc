@@ -4,12 +4,13 @@ import (
     "fmt"
     "github.com/golang/glog"
     "sync"
+    "time"
     "ts_promote/assert"
     "ts_promote/data_struct"
 )
 
-var txnConflictErr = NewTxnError(fmt.Errorf("txn conflict"), true)
-var txnStaleWriteErr = NewTxnError(fmt.Errorf("stale write"), true)
+var txnErrConflict = NewTxnError(fmt.Errorf("txn conflict"), true)
+var txnErrStaleWrite = NewTxnError(fmt.Errorf("stale write"), true)
 
 type TxEngineTO struct {
     threadNum      int
@@ -175,7 +176,6 @@ func (te *TxEngineTO) committer(db *DB) {
                     " version_num_of_txn(%d) < committed_version(%d)",
                     txn.TxId, ts, v, k, ts, vv.Version)
                 glog.Warningf(msg)
-                panic(msg)
             }
         }
         glog.Infof("txn(%s) succeeded", txn.String())
@@ -224,9 +224,9 @@ func (te *TxEngineTO) rollback(tx *Txn, reason error) {
         te.removeWriteTxForKey(key, tx)
     }
     tx.ClearCommitData()
-    if reason == txnStaleWriteErr {
+    if reason == txnErrStaleWrite {
         tx.Done(TxStatusFailedRetryable)
-    } else if reason == txnConflictErr {
+    } else if reason == txnErrConflict {
         tx.Done(TxStatusFailedRetryable)
     } else {
         tx.Done(TxStatusFailed)
@@ -234,6 +234,16 @@ func (te *TxEngineTO) rollback(tx *Txn, reason error) {
 }
 
 func (te *TxEngineTO) executeOp(db *DB, txn *Txn, op Op) error {
+    if op.typ.IsIncr() {
+        return te.executeIncrOp(db, txn, op)
+    }
+    if op.typ == WriteDirect {
+        return te.set(txn, op.key, op.operatorNum)
+    }
+    panic("not implemented")
+}
+
+func (te *TxEngineTO) executeIncrOp(db *DB, txn *Txn, op Op) error {
     val, err := te.get(db, txn, op.key)
     if err != nil {
         return err
@@ -245,6 +255,8 @@ func (te *TxEngineTO) executeOp(db *DB, txn *Txn, op Op) error {
         val += op.operatorNum
     case IncrMultiply:
         val *= op.operatorNum
+    default:
+        panic("unimplemented")
     }
     return te.set(txn, op.key, val)
 }
@@ -319,7 +331,7 @@ func (te *TxEngineTO) get(db *DB, txn *Txn, key string) (val float64, err error)
     }
     if (txn.ReadVersion == 0 && ts < vv.Version) || (txn.ReadVersion > 0 && txn.ReadVersion < vv.Version) {
         // Read future versions, can't do anything
-        err = txnConflictErr
+        err = txnErrConflict
         return
     }
     writtenTxn := vv.WrittenTxn
@@ -329,7 +341,9 @@ func (te *TxEngineTO) get(db *DB, txn *Txn, key string) (val float64, err error)
         writtenTxn.WaitUntilDone(txn)
     }
     if txn.ReadVersion == 0 {
-        txn.ReadVersion = vv.Version
+        txn.ReadVersion = db.FindMaxVersion(func(version int64) bool {
+            return version <= ts
+        })
     }
     te.putReadTxForKey(key, txn)
     val = vv.Value
@@ -346,15 +360,33 @@ func (te *TxEngineTO) set(txn *Txn, key string, val float64) (err error) {
 
     // Write-read conflict
     if ts < te.getMaxReadTxForKey(key).GetTimestamp() {
-        err = txnConflictErr
+        err = txnErrConflict
         return
     }
 
     // Write-write conflict
-    if ts < te.getMaxWriteTxForKey(key).GetTimestamp() {
-        // TODO Apply Thomas's ellison rule.
-        err = txnStaleWriteErr
-        return
+    for {
+        maxWriteTxn := te.getMaxWriteTxForKey(key)
+        if ts < maxWriteTxn.GetTimestamp() {
+            for i := 0; i < 10; i++ {
+                status := maxWriteTxn.GetStatus()
+                if status.Done() {
+                    if status.Succeeded() {
+                        // Apply Thomas's ellison rule.
+                        return
+                    }
+                    //assert.Must(status.HasError())
+                    break
+                }
+                time.Sleep(1 * time.Millisecond)
+            }
+            if maxWriteTxn.GetStatus().HasError() {
+                continue
+            }
+            return txnErrStaleWrite
+        } else {
+            break
+        }
     }
 
     txn.AddCommitData(key, val)

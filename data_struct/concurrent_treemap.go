@@ -29,8 +29,21 @@ func (ctm *ConcurrentTreeMap) Remove(key interface{}) {
     ctm.mutex.Unlock()
 }
 
+func (ctm *ConcurrentTreeMap) Clear() {
+    ctm.mutex.Lock()
+    ctm.tm.Clear()
+    ctm.mutex.Unlock()
+}
+
+
 func (ctm *ConcurrentTreeMap) Max() (interface{}, interface{}) {
     ctm.mutex.RLock()
     defer ctm.mutex.RUnlock()
     return ctm.tm.Max()
+}
+
+func (ctm *ConcurrentTreeMap) Find(f func(key interface{}, value interface{}) bool) (interface{}, interface{}) {
+    ctm.mutex.RLock()
+    defer ctm.mutex.RUnlock()
+    return ctm.tm.Find(f)
 }

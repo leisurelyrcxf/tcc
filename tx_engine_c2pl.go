@@ -80,6 +80,17 @@ func (te *TxEngineC2PL) executeSingleTx(db* DB, tx *Txn) error {
 }
 
 func (te *TxEngineC2PL) executeOp(db* DB, tx *Txn, op Op) error {
+    if op.typ.IsIncr() {
+        return te.executeIncrOp(db, tx, op)
+    }
+    if op.typ == WriteDirect {
+        db.SetUnsafe(op.key, op.operatorNum, 0, tx)
+        return nil
+    }
+    panic("not implemented")
+}
+
+func (te *TxEngineC2PL) executeIncrOp(db* DB, tx *Txn, op Op) error {
     val, err := db.Get(op.key)
     if err != nil {
         return NewTxnError(fmt.Errorf("key '%s' not exist, detail: '%s'", op.key, err), false)

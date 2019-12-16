@@ -2,6 +2,7 @@ package ts_promote
 
 import (
     "fmt"
+    "github.com/golang/glog"
     "testing"
 )
 
@@ -68,7 +69,7 @@ func TxTest(t *testing.T, db *DB, txns []*Txn, initDBFunc func(*DB),
             txn.Reset()
         }
 
-        fmt.Printf("\nRound: %d\n", i)
+        glog.Infof("\nRound: %d\n", i)
         if err := executeTxns(db, txns, txnEngineConstructor); err != nil {
             t.Errorf(err.Error())
             return

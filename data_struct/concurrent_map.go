@@ -29,6 +29,12 @@ func (cmp *concurrentMapPartition) del(key string) {
 	delete(cmp.m, key)
 }
 
+func (cmp *concurrentMapPartition) forEachLocked(cb func(string, interface{})) {
+	for key, val := range cmp.m {
+		cb(key, val)
+	}
+}
+
 type ConcurrentMap struct {
 	partitions []concurrentMapPartition
 }
@@ -69,12 +75,18 @@ func (cmp *ConcurrentMap) Del(key string) {
 	cmp.partitions[cmp.hash(key)].del(key)
 }
 
-func (cmp *ConcurrentMap) ForEach(cb func(string, interface{})) {
+func (cmp *ConcurrentMap) ForEachLoosed(cb func(string, interface{})) {
+	for _, partition := range cmp.partitions {
+		partition.mutex.RLock()
+		partition.forEachLocked(cb)
+		partition.mutex.RUnlock()
+	}
+}
+
+func (cmp *ConcurrentMap) ForEachStrict(cb func(string, interface{})) {
 	cmp.RLock()
 	for _, partition := range cmp.partitions {
-		for key, val := range partition.m {
-			cb(key, val)
-		}
+		partition.forEachLocked(cb)
 	}
 	cmp.RUnlock()
 }

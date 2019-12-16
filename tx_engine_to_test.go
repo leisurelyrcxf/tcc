@@ -29,8 +29,7 @@ func TestNewTxEngineTO(t *testing.T) {
             typ: IncrAdd,
             operatorNum: 1,
         }},
-    ),
-        NewTx(
+    ), NewTx(
             []Op {{
                 key: "b",
                 typ: IncrMultiply,
@@ -40,13 +39,20 @@ func TestNewTxEngineTO(t *testing.T) {
                 typ: IncrAdd,
                 operatorNum: 10,
             }},
-        ),
+    ), NewTx(
+        []Op {{
+            key:         "a",
+            typ:         WriteDirect,
+            operatorNum: 100,
+        }},
+    ),
     }
 
     initDBFunc := func (db *DB) {
         db.SetUnsafe("a", 0, 0, nil)
         db.SetUnsafe("b", 1, 0, nil)
         db.ts.c.Set(0)
+        db.versions.Clear()
     }
 
     round := 100000

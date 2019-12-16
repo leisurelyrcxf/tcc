@@ -23,18 +23,23 @@ func TestNewTxEngineC2PL(t *testing.T) {
             typ: IncrAdd,
             operatorNum: 1,
         }},
+    ), NewTx(
+        []Op {{
+            key: "b",
+            typ: IncrMultiply,
+            operatorNum: 20,
+        }, {
+            key: "a",
+            typ: IncrAdd,
+            operatorNum: 10,
+        }},
+    ), NewTx(
+        []Op {{
+            key:         "a",
+            typ:         WriteDirect,
+            operatorNum: 100,
+        }},
     ),
-        NewTx(
-            []Op {{
-                key: "b",
-                typ: IncrMultiply,
-                operatorNum: 20,
-            }, {
-                key: "a",
-                typ: IncrAdd,
-                operatorNum: 10,
-            }},
-        ),
     }
 
     db := NewDB()
@@ -42,6 +47,7 @@ func TestNewTxEngineC2PL(t *testing.T) {
         db.SetUnsafe("a", 0, 0, nil)
         db.SetUnsafe("b", 1, 0, nil)
         db.ts.c.Set(0)
+        db.versions.Clear()
     }, func() TxEngine {
         return NewTxEngineC2PL(4)
     }, 10000)

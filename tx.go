@@ -14,7 +14,12 @@ const (
     IncrMultiply OpType = iota
     IncrAdd
     IncrMinus
+    WriteDirect
 )
+
+func (ot OpType) IsIncr() bool {
+    return int(ot) < int(WriteDirect)
+}
 
 type Op struct {
     key string
@@ -47,6 +52,10 @@ func (s TxStatus) String() string {
     default:
         panic("unreachable code")
     }
+}
+
+func (s TxStatus) Succeeded() bool {
+    return s == TxStatusSucceeded
 }
 
 func (s TxStatus) Done() bool {
