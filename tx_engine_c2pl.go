@@ -65,8 +65,8 @@ func (te *TxEngineC2PL) executeSingleTx(db* DB, tx *Tx) error {
         db.lm.lockKey(key)
     }
     defer func() {
-        for _, key := range keys {
-            db.lm.unlockKey(key)
+        for i := len(keys) - 1; i >= 0; i-- {
+            db.lm.unlockKey(keys[i])
         }
     }()
 

@@ -1,5 +1,5 @@
 package ts_promote
 
 type TxEngine interface {
-    ExecuteTxns(txs []*Tx) error
+    ExecuteTxns(db* DB, txns []*Tx) error
 }
