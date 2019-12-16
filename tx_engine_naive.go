@@ -16,7 +16,7 @@ func (te *TxEngineNaive) ExecuteTxns(db* DB, txns []*Txn) error {
 }
 
 func (te *TxEngineNaive) executeSingleTx(db* DB, tx *Txn) error {
-    tx.SetTimestamp(db.ts.FetchTimestamp())
+    tx.Start(db.ts.FetchTimestamp())
     for _, op := range tx.Ops {
         if err := te.executeOp(db, op); err != nil {
             return err

@@ -181,7 +181,6 @@ func (te *TxEngineTO) executeSingleTx(db *DB, tx *Txn) error {
     for {
         err := te._executeSingleTx(db, tx)
         if err != nil && err.(*TxnError).IsRetryable() {
-            tx.ReInit()
             continue
         }
         return err
@@ -190,7 +189,7 @@ func (te *TxEngineTO) executeSingleTx(db *DB, tx *Txn) error {
 
 func (te *TxEngineTO) _executeSingleTx(db *DB, txn *Txn) (err error) {
     // Assign a new timestamp.
-    txn.SetTimestamp(db.ts.FetchTimestamp())
+    txn.Start(db.ts.FetchTimestamp())
 
     defer func() {
         if err != nil {
@@ -303,7 +302,7 @@ func (te *TxEngineTO) get(db *DB, txn *Txn, key string) (val float64, err error)
            continue
         }
         db.lm.unlockKey(key)
-        maxWriteTxn.WaitTillDone(round, txn)
+        maxWriteTxn.WaitUntilDone(round, txn)
         db.lm.lockKey(key)
     }
 

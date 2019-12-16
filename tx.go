@@ -108,7 +108,7 @@ func (tx *Txn) Done(status TxStatus) {
     tx.mutex.Lock()
 
     assert.Must(status.Done())
-    tx.SetStatus(status)
+    tx.SetStatusLocked(status)
     tx.IncrRound()
 
     tx.mutex.Unlock()
@@ -125,20 +125,21 @@ func (tx *Txn) GetStatus() TxStatus {
     return TxStatus(tx.status.Get())
 }
 
-func (tx *Txn) SetStatus(status TxStatus) {
+func (tx *Txn) SetStatusLocked(status TxStatus) {
     tx.status.Set(int32(status))
+}
+
+func (tx *Txn) Start(ts int64) {
+    tx.mutex.Lock()
+    tx.timestamp.Set(ts)
+    tx.SetStatusLocked(TxStatusPending)
+    tx.mutex.Unlock()
+
+    tx.doneCond.Broadcast()
 }
 
 func (tx *Txn) GetTimestamp() int64 {
     return tx.timestamp.Get()
-}
-
-func (tx *Txn) SetTimestamp(new int64) {
-    tx.mutex.Lock()
-    tx.timestamp.Set(new)
-    tx.mutex.Unlock()
-
-    tx.doneCond.Broadcast()
 }
 
 func (tx *Txn) GetRound() int32 {
@@ -149,7 +150,7 @@ func (tx *Txn) IncrRound() {
     tx.round.Add(1)
 }
 
-func (tx *Txn) WaitTillDone(round int32, waiter *Txn) {
+func (tx *Txn) WaitUntilDone(round int32, waiter *Txn) {
     tx.mutex.Lock()
 
     for tx.GetRound() == round && !tx.GetStatus().Done() && waiter.GetTimestamp() > tx.GetTimestamp()  {
@@ -161,10 +162,19 @@ func (tx *Txn) WaitTillDone(round int32, waiter *Txn) {
     tx.mutex.Unlock()
 }
 
-func (tx *Txn) ReInit() {
-    assert.Must(len(tx.commitData) == 0)
-    tx.SetStatus(TxStatusInitialized)
-    glog.V(10).Infof("ReInit txn(%s)", tx.String())
+func (tx *Txn) Reset() {
+    tx.mutex.Lock()
+
+    tx.ClearCommitData()
+    tx.timestamp.Set(0)
+
+    tx.round.Set(0)
+    tx.SetStatusLocked(TxStatusInitialized)
+
+    tx.mutex.Unlock()
+
+    tx.doneCond.Broadcast()
+    glog.V(10).Infof("Reset txn(%s)", tx.String())
 }
 
 func (tx *Txn) GetCommitData() map[string]float64 {

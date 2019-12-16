@@ -62,9 +62,7 @@ func TestNewTxEngineTO(t *testing.T) {
 func executeOneRound(db *DB, txns []*Txn, initDBFunc func(*DB)) error {
     initDBFunc(db)
     for _, txn := range txns {
-        txn.SetTimestamp(0)
-        txn.ClearCommitData()
-        txn.ReInit()
+        txn.Reset()
     }
 
     if err := NewTxEngineTO(4, db.lm).ExecuteTxns(db, txns); err != nil {

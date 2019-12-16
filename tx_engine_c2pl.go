@@ -58,7 +58,7 @@ func (te *TxEngineC2PL) executeTxnsSingleThread(db* DB) error {
 }
 
 func (te *TxEngineC2PL) executeSingleTx(db* DB, tx *Txn) error {
-    tx.SetTimestamp(db.ts.FetchTimestamp())
+    tx.Start(db.ts.FetchTimestamp())
 
     keys := tx.CollectKeys()
     sort.Strings(keys)
