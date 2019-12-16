@@ -71,8 +71,8 @@ type Txn struct {
     round    sync2.AtomicInt32
     status sync2.AtomicInt32
 
-    mutex    sync.Mutex
-    doneCond sync.Cond
+    mutex sync.Mutex
+    cond  sync.Cond
 }
 
 var emptyTx = &Txn{}
@@ -86,7 +86,7 @@ func NewTx(ops []Op) *Txn {
         round: sync2.NewAtomicInt32(0),
         status: sync2.NewAtomicInt32(int32(TxStatusInitialized)),
     }
-    txn.doneCond = sync.Cond{
+    txn.cond = sync.Cond{
         L: &txn.mutex,
     }
     return txn
@@ -102,19 +102,6 @@ func (tx *Txn) CollectKeys() []string {
         keys = append(keys, op.key)
     }
     return keys
-}
-
-func (tx *Txn) Done(status TxStatus) {
-    tx.mutex.Lock()
-
-    assert.Must(status.Done())
-    tx.SetStatusLocked(status)
-    tx.IncrRound()
-
-    tx.mutex.Unlock()
-
-    tx.doneCond.Broadcast()
-    glog.V(10).Infof("Done txn(%s), status: '%s', new round: %d", tx.String(), status.String(), tx.round.Get())
 }
 
 func (tx *Txn) String() string {
@@ -135,7 +122,21 @@ func (tx *Txn) Start(ts int64) {
     tx.SetStatusLocked(TxStatusPending)
     tx.mutex.Unlock()
 
-    tx.doneCond.Broadcast()
+    tx.cond.Broadcast()
+    glog.V(10).Infof("Start txn(%s), status: '%s', round: %d", tx.String(), tx.GetStatus().String(), tx.round.Get())
+}
+
+func (tx *Txn) Done(status TxStatus) {
+    tx.mutex.Lock()
+
+    assert.Must(status.Done())
+    tx.SetStatusLocked(status)
+    tx.IncrRound()
+
+    tx.mutex.Unlock()
+
+    tx.cond.Broadcast()
+    glog.V(10).Infof("Done txn(%s), status: '%s', new round: %d", tx.String(), status.String(), tx.round.Get())
 }
 
 func (tx *Txn) GetTimestamp() int64 {
@@ -155,7 +156,7 @@ func (tx *Txn) WaitUntilDone(round int32, waiter *Txn) {
 
     for tx.GetRound() == round && !tx.GetStatus().Done() && waiter.GetTimestamp() > tx.GetTimestamp()  {
         glog.Infof("txn(%s) wait for txn(%s)'s %dth round to finish", waiter.String(), tx.String(), round)
-        tx.doneCond.Wait()
+        tx.cond.Wait()
         glog.Infof("txn(%s) waited txn(%s)'s %dth round successfully", waiter.String(), tx.String(), round)
     }
 
@@ -173,7 +174,7 @@ func (tx *Txn) Reset() {
 
     tx.mutex.Unlock()
 
-    tx.doneCond.Broadcast()
+    tx.cond.Broadcast()
     glog.V(10).Infof("Reset txn(%s)", tx.String())
 }
 
