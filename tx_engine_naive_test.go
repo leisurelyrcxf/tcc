@@ -58,6 +58,6 @@ func TestTxEngineNaive_ExecuteTxns(t *testing.T) {
         return
     }
     for _, txn := range txns {
-        fmt.Println(txn.Timestamp)
+        fmt.Println(txn.GetTimestamp())
     }
 }

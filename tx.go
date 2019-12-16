@@ -66,7 +66,7 @@ type Txn struct {
 
     // Changeable fields.
     commitData map[string]float64
-    Timestamp  int64
+    timestamp  sync2.AtomicInt64
 
     round    sync2.AtomicInt32
     status sync2.AtomicInt32
@@ -108,45 +108,63 @@ func (tx *Txn) Done(status TxStatus) {
     tx.mutex.Lock()
 
     assert.Must(status.Done())
-    tx.status.Set(int32(status))
-    tx.round.Add(1)
+    tx.SetStatus(status)
+    tx.IncrRound()
 
     tx.mutex.Unlock()
 
     tx.doneCond.Broadcast()
-    glog.V(10).Infof("Done txn(%s), status: '%s'", tx.String(), status.String())
+    glog.V(10).Infof("Done txn(%s), status: '%s', new round: %d", tx.String(), status.String(), tx.round.Get())
 }
 
 func (tx *Txn) String() string {
-    return fmt.Sprintf("%d, %d", tx.TxId, tx.Timestamp)
+    return fmt.Sprintf("%d, %d", tx.TxId, tx.GetTimestamp())
 }
 
 func (tx *Txn) GetStatus() TxStatus {
     return TxStatus(tx.status.Get())
 }
 
+func (tx *Txn) SetStatus(status TxStatus) {
+    tx.status.Set(int32(status))
+}
+
+func (tx *Txn) GetTimestamp() int64 {
+    return tx.timestamp.Get()
+}
+
+func (tx *Txn) SetTimestamp(new int64) {
+    tx.mutex.Lock()
+    tx.timestamp.Set(new)
+    tx.mutex.Unlock()
+
+    tx.doneCond.Broadcast()
+}
+
 func (tx *Txn) GetRound() int32 {
     return tx.round.Get()
 }
 
+func (tx *Txn) IncrRound() {
+    tx.round.Add(1)
+}
+
 func (tx *Txn) WaitTillDone(round int32, waiter *Txn) {
-    if tx.GetRound() == round {
-        tx.mutex.Lock()
+    tx.mutex.Lock()
 
-        for tx.GetRound() == round {
-            glog.Infof("txn(%s) wait for txn(%s) to finish", waiter.String(), tx.String())
-            tx.doneCond.Wait()
-            glog.Infof("txn(%s) waited txn(%s) successfully", waiter.String(), tx.String())
-        }
-
-        tx.mutex.Unlock()
+    for tx.GetRound() == round && !tx.GetStatus().Done() && waiter.GetTimestamp() > tx.GetTimestamp()  {
+        glog.Infof("txn(%s) wait for txn(%s)'s %dth round to finish", waiter.String(), tx.String(), round)
+        tx.doneCond.Wait()
+        glog.Infof("txn(%s) waited txn(%s)'s %dth round successfully", waiter.String(), tx.String(), round)
     }
+
+    tx.mutex.Unlock()
 }
 
 func (tx *Txn) ReInit() {
     assert.Must(len(tx.commitData) == 0)
-    tx.status = sync2.NewAtomicInt32(int32(TxStatusInitialized))
-    glog.Infof("ReInit txn(%s)", tx.String())
+    tx.SetStatus(TxStatusInitialized)
+    glog.V(10).Infof("ReInit txn(%s)", tx.String())
 }
 
 func (tx *Txn) GetCommitData() map[string]float64 {
@@ -158,7 +176,7 @@ func (tx *Txn) ClearCommitData() {
 }
 
 func Later(a *Txn, b *Txn) *Txn {
-    if a.Timestamp > b.Timestamp {
+    if a.GetTimestamp() > b.GetTimestamp() {
         return a
     }
     return b
@@ -192,7 +210,7 @@ func (ts TxnSliceSortByTimestamp) Len() int {
 }
 
 func (ts TxnSliceSortByTimestamp) Less(i, j int) bool {
-    return ts[i].Timestamp < ts[j].Timestamp
+    return ts[i].GetTimestamp() < ts[j].GetTimestamp()
 }
 
 func (ts TxnSliceSortByTimestamp) Swap(i, j int) {

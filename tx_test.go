@@ -65,7 +65,7 @@ func TxTest(t *testing.T, db *DB, txns []*Txn, initDBFunc func(*DB),
     for i := 0; i < round; i++ {
         initDBFunc(db)
         for _, txn := range txns {
-            txn.Timestamp = 0
+            txn.SetTimestamp(0)
             txn.ClearCommitData()
             txn.ReInit()
         }

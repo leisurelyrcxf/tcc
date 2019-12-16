@@ -6,8 +6,6 @@ import (
 )
 
 func TestPermutate(t *testing.T) {
-    db := NewDB()
-
     txns := []*Txn{NewTx(
         []Op {{
             key: "a",
@@ -39,10 +37,6 @@ func TestPermutate(t *testing.T) {
             operatorNum: 2,
         }},
     )}
-
-    for _, txn := range txns {
-        txn.Timestamp = db.ts.FetchTimestamp()
-    }
 
     ch := Permutate(txns)
     for txns := range ch {

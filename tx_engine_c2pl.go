@@ -33,7 +33,7 @@ func (te *TxEngineC2PL) ExecuteTxns(db* DB, txns []*Txn) error {
         wg.Add(1)
         go func() {
             defer wg.Done()
-            if err := te.executeTxns(db); err != nil {
+            if err := te.executeTxnsSingleThread(db); err != nil {
                 te.errs <- err.(*TxnError)
             }
         }()
@@ -48,9 +48,8 @@ func (te *TxEngineC2PL) ExecuteTxns(db* DB, txns []*Txn) error {
     }
 }
 
-func (te *TxEngineC2PL) executeTxns(db* DB) error {
+func (te *TxEngineC2PL) executeTxnsSingleThread(db* DB) error {
     for txn := range te.txns {
-        txn.Timestamp = db.ts.FetchTimestamp()
         if err := te.executeSingleTx(db, txn); err != nil {
             return err
         }
@@ -59,7 +58,7 @@ func (te *TxEngineC2PL) executeTxns(db* DB) error {
 }
 
 func (te *TxEngineC2PL) executeSingleTx(db* DB, tx *Txn) error {
-    tx.Timestamp = db.ts.FetchTimestamp()
+    tx.SetTimestamp(db.ts.FetchTimestamp())
 
     keys := tx.CollectKeys()
     sort.Strings(keys)

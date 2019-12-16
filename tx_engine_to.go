@@ -65,7 +65,7 @@ func putTxForKey(key string, tx *Txn, m *data_struct.ConcurrentMap) {
         tm = data_struct.NewConcurrentTreeMap(func(a, b interface{}) int {
             ta := a.(*Txn)
             tb := b.(*Txn)
-            return int(ta.Timestamp - tb.Timestamp)
+            return int(ta.GetTimestamp() - tb.GetTimestamp())
         })
         m.Set(key, tm)
     } else {
@@ -148,10 +148,12 @@ func (te *TxEngineTO) executeTxnsSingleThread(db *DB) error {
 func (te *TxEngineTO) committer(db *DB) {
     defer close(te.committerDone)
     for txn := range te.committingTxns {
+        ts := txn.GetTimestamp()
         for k, v := range txn.GetCommitData() {
             vv, err := db.GetVersionedValue(k)
             if err == KeyNotExist {
-                db.SetUnsafe(k, v, txn.Timestamp)
+                // Safe here.
+                db.SetUnsafe(k, v, ts)
                 continue
             }
             if err != nil {
@@ -159,13 +161,13 @@ func (te *TxEngineTO) committer(db *DB) {
                 txn.Done(TxStatusFailed)
                 return
             }
-            if txn.Timestamp >= vv.Version {
+            if ts >= vv.Version {
                 // Safe here.
-                db.SetUnsafe(k, v, txn.Timestamp)
+                db.SetUnsafe(k, v, ts)
             } else {
                 msg := fmt.Sprintf("ignored txn(%d, %d) committed value %f for key '%s'," +
                     " version_num_of_txn(%d) < committed_version(%d)",
-                    txn.TxId, txn.Timestamp, v, k, txn.Timestamp, vv.Version)
+                    txn.TxId, ts, v, k, ts, vv.Version)
                 glog.Warningf(msg)
                 panic(msg)
             }
@@ -187,7 +189,9 @@ func (te *TxEngineTO) executeSingleTx(db *DB, tx *Txn) error {
 }
 
 func (te *TxEngineTO) _executeSingleTx(db *DB, txn *Txn) (err error) {
-    txn.Timestamp = db.ts.FetchTimestamp()
+    // Assign a new timestamp.
+    txn.SetTimestamp(db.ts.FetchTimestamp())
+
     defer func() {
         if err != nil {
             te.rollback(txn, err)
@@ -209,7 +213,7 @@ func (te *TxEngineTO) rollback(tx *Txn, reason error) {
     if reason.(*TxnError).IsRetryable() {
         retryLaterStr = ", retry later"
     }
-    glog.Infof("rollback txn(%d, %d) due to error '%s'%s", tx.TxId, tx.Timestamp, reason.Error(), retryLaterStr)
+    glog.Infof("rollback txn(%s) due to error '%s'%s", tx.String(), reason.Error(), retryLaterStr)
     for _, key := range tx.CollectKeys() {
         te.removeReadTxForKey(key, tx)
         te.removeWriteTxForKey(key, tx)
@@ -243,26 +247,33 @@ func (te *TxEngineTO) executeOp(db *DB, txn *Txn, op Op) error {
 func (te *TxEngineTO) get(db *DB, txn *Txn, key string) (val float64, err error) {
     te.lm.lockKey(key)
     defer te.lm.unlockKey(key)
-    glog.Infof("txn(%d, %d) want to get key '%s'", txn.TxId, txn.Timestamp, key)
+
+    glog.Infof("txn(%s) want to get key '%s'", txn.String(), key)
+    // ts won't change because only this thread can modify it's value.
+    ts := txn.GetTimestamp()
 
     for {
-        // Read-write conflict
         maxWriteTxn := te.getMaxWriteTxForKey(key)
-        if maxWriteTxn == emptyTx || maxWriteTxn.Timestamp == txn.Timestamp {
+        // round is also a snapshot
+        round := maxWriteTxn.GetRound()
+        // maxWriteTxnTs is only a snapshot may change any time later.
+        maxWriteTxnTs := maxWriteTxn.GetTimestamp()
+        if maxWriteTxn == emptyTx || maxWriteTxnTs == ts {
+            // Empty or is self, always safe.
             assert.Must(maxWriteTxn == emptyTx || maxWriteTxn == txn)
             break
         }
 
-        if txn.Timestamp < maxWriteTxn.Timestamp {
-            // If we can't read later version, then it's still safe
+        if maxWriteTxnTs > ts  {
+            // Read-write conflict.
+            // If we can't read later version, then it's still safe.
+            // Let's check later.
             break
         }
 
-        // txn.Timestamp > maxWriteTxn.Timestamp
-        // This round statement must be before maxWriteTxn.GetStatus().
-        // If txn get done later than this statement, then this round is old
-        // enough, won't block WaitTillDone(round)
-        round := maxWriteTxn.GetRound()
+        // assert.Must(maxWriteTxnTs < ts)
+
+        // mwStatus is also a snapshot
         mwStatus := maxWriteTxn.GetStatus()
         if mwStatus == TxStatusSucceeded {
             // Already succeeded, safe property could be proved as below:
@@ -286,7 +297,9 @@ func (te *TxEngineTO) get(db *DB, txn *Txn, key string) (val float64, err error)
         }
 
         // Wait until depending txn finishes.
-        if maxWriteTxn.GetRound() != round {
+        if maxWriteTxn.GetRound() != round  ||
+            maxWriteTxn.GetStatus().Done() ||
+            maxWriteTxn.GetTimestamp() != maxWriteTxnTs {
            continue
         }
         db.lm.unlockKey(key)
@@ -299,7 +312,7 @@ func (te *TxEngineTO) get(db *DB, txn *Txn, key string) (val float64, err error)
         err = NewTxnError(dbErr, false)
         return
     }
-    if txn.Timestamp < vv.Version {
+    if ts < vv.Version {
         // Read future versions, can't do anything
         err = txConflictErr
         return
@@ -312,18 +325,19 @@ func (te *TxEngineTO) get(db *DB, txn *Txn, key string) (val float64, err error)
 func (te *TxEngineTO) set(txn *Txn, key string, val float64) (err error) {
     te.lm.lockKey(key)
     defer te.lm.unlockKey(key)
-    glog.Infof("txn(%d, %d) want to set key '%s' to value %f", txn.TxId, txn.Timestamp, key, val)
+    glog.Infof("txn(%s) want to set key '%s' to value %f", txn.String(), key, val)
+
+    ts := txn.GetTimestamp()
 
     // Write-read conflict
-    maxReadTxn := te.getMaxReadTxForKey(key)
-    if txn.Timestamp < maxReadTxn.Timestamp {
+    if ts < te.getMaxReadTxForKey(key).GetTimestamp() {
         err = txConflictErr
         return
     }
 
     // Write-write conflict
-    maxWriteTxn := te.getMaxWriteTxForKey(key)
-    if txn.Timestamp < maxWriteTxn.Timestamp {
+    // TODO Thomas's ellison rule.
+    if ts < te.getMaxWriteTxForKey(key).GetTimestamp() {
         err = txStaleWrite
         return
     }
