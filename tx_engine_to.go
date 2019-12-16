@@ -45,7 +45,13 @@ func getMaxTxForKey(key string, m *data_struct.ConcurrentMap) *Txn {
         if obj == nil {
             return emptyTx
         }
-        return obj.(*Txn)
+        txn := obj.(*Txn)
+        status := txn.GetStatus()
+        if status == TxStatusFailedRetryable || status == TxStatusFailed {
+            removeTxForKey(key, txn, m)
+            return getMaxTxForKey(key, m)
+        }
+        return txn
     }
 }
 
@@ -291,8 +297,7 @@ func (te *TxEngineTO) get(db *DB, txn *Txn, key string) (val float64, err error)
             break
         }
         if mwStatus == TxStatusFailedRetryable || mwStatus == TxStatusFailed {
-            // Already failed, then this maxWriteTxn must have been rollbacked
-            continue
+            assert.Must(false)
         }
 
         // Wait until depending txn finishes.
@@ -318,6 +323,7 @@ func (te *TxEngineTO) get(db *DB, txn *Txn, key string) (val float64, err error)
     }
     te.putReadTxForKey(key, Later(te.getMaxReadTxForKey(key), txn))
     val = vv.Value
+    glog.Infof("txn(%s) got value %f for key '%s'", txn.String(), val, key)
     return
 }
 
@@ -343,5 +349,6 @@ func (te *TxEngineTO) set(txn *Txn, key string, val float64) (err error) {
 
     txn.AddCommitData(key, val)
     te.putWriteTxForKey(key, txn)
+    glog.Infof("txn(%s) succeeded in setting key '%s' to value %f", txn.String(), key, val)
     return
 }
