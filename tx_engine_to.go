@@ -322,7 +322,7 @@ func (te *TxEngineTO) get(db *DB, txn *Txn, key string) (val float64, err error)
         err = txnConflictErr
         return
     }
-    te.putReadTxForKey(key, Later(te.getMaxReadTxForKey(key), txn))
+    te.putReadTxForKey(key, txn)
     val = vv.Value
     glog.Infof("txn(%s) got value %f for key '%s'", txn.String(), val, key)
     return
