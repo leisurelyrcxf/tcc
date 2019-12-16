@@ -129,14 +129,17 @@ func (tx *Txn) GetRound() int32 {
     return tx.round.Get()
 }
 
-func (tx *Txn) WaitTillDone(round int32) {
+func (tx *Txn) WaitTillDone(round int32, waiter *Txn) {
     if tx.GetRound() == round {
         tx.mutex.Lock()
-        defer tx.mutex.Unlock()
 
         for tx.GetRound() == round {
+            glog.Infof("txn(%s) wait for txn(%s) to finish", waiter.String(), tx.String())
             tx.doneCond.Wait()
+            glog.Infof("txn(%s) waited txn(%s) successfully", waiter.String(), tx.String())
         }
+
+        tx.mutex.Unlock()
     }
 }
 

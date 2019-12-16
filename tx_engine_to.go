@@ -286,12 +286,11 @@ func (te *TxEngineTO) get(db *DB, txn *Txn, key string) (val float64, err error)
         }
 
         // Wait until depending txn finishes.
-        glog.Infof("txn(%d, %d) wait for txn(%d) to finish", txn.TxId, txn.Timestamp, maxWriteTxn.TxId)
         if maxWriteTxn.GetRound() != round {
            continue
         }
         db.lm.unlockKey(key)
-        maxWriteTxn.WaitTillDone(round)
+        maxWriteTxn.WaitTillDone(round, txn)
         db.lm.lockKey(key)
     }
 

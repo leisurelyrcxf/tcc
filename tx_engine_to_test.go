@@ -63,6 +63,7 @@ func executeOneRound(db *DB, txns []*Txn, initDBFunc func(*DB)) error {
     initDBFunc(db)
     for _, txn := range txns {
         txn.Timestamp = 0
+        txn.ClearCommitData()
         txn.ReInit()
     }
 
