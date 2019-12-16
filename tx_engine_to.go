@@ -248,32 +248,48 @@ func (te *TxEngineTO) get(db *DB, txn *Txn, key string) (val float64, err error)
     for {
         // Read-write conflict
         maxWriteTxn := te.getMaxWriteTxForKey(key)
-        if maxWriteTxn == emptyTx {
+        if maxWriteTxn == emptyTx || maxWriteTxn.Timestamp == txn.Timestamp {
+            assert.Must(maxWriteTxn == emptyTx || maxWriteTxn == txn)
             break
         }
 
         if txn.Timestamp < maxWriteTxn.Timestamp {
+            // If we can't read later version, then it's still safe
             break
         }
 
-        if txn.Timestamp == maxWriteTxn.Timestamp {
-           assert.Must(txn == maxWriteTxn)
-           // Non need to wait for himself
-           break
-        }
-
+        // txn.Timestamp > maxWriteTxn.Timestamp
+        // This round statement must be before maxWriteTxn.GetStatus().
+        // If txn get done later than this statement, then this round is old
+        // enough, won't block WaitTillDone(round)
         round := maxWriteTxn.GetRound()
         mwStatus := maxWriteTxn.GetStatus()
         if mwStatus == TxStatusSucceeded {
-            // Already succeeded
+            // Already succeeded, safe property could be proved as below:
+            // For such tx which holds maxWriteTxn.Timestamp < tx.Timestamp < this_txn.Timestamp:
+            //     If tx has already written to key, then it's a contradiction (maxWriteTxn will be tx instead);
+            //     if tx has not written to the key, it will never have a chance to write to the key in the future
+            //         because it will find tx.Timestamp < maxReadTxn.Timestamp
+            //         (maxReadTxn.Timestamp >= this_txn.Timestamp).
+            //
+            // For such tx which holds tx.Timestamp < maxWriteTxn.Timestamp < this_txn.Timestamp, since
+            // maxWriteTxn's write to the key has already been saved to db, tx's write to the key will
+            // never be visible.
+            //     If it has already written, then the value has been overwritten by maxWriteTxn;
+            //     if it has not written, it will be either omitted (Thomas' write rule),
+            //     either be discarded (if Thomas's write rule is not applied.
             break
         }
         if mwStatus == TxStatusFailedRetryable || mwStatus == TxStatusFailed {
-            // Already failed, then maxWriteTxn must have rollbacked
+            // Already failed, then this maxWriteTxn must have been rollbacked
             continue
         }
-        // Wait until depending txn to finish
+
+        // Wait until depending txn finishes.
         glog.Infof("txn(%d, %d) wait for txn(%d) to finish", txn.TxId, txn.Timestamp, maxWriteTxn.TxId)
+        if maxWriteTxn.GetRound() != round {
+           continue
+        }
         db.lm.unlockKey(key)
         maxWriteTxn.WaitTillDone(round)
         db.lm.lockKey(key)
@@ -289,8 +305,7 @@ func (te *TxEngineTO) get(db *DB, txn *Txn, key string) (val float64, err error)
         err = txConflictErr
         return
     }
-    maxReadTxn := te.getMaxReadTxForKey(key)
-    te.putReadTxForKey(key, Later(maxReadTxn, txn))
+    te.putReadTxForKey(key, Later(te.getMaxReadTxForKey(key), txn))
     val = vv.Value
     return
 }

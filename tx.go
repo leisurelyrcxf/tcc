@@ -103,11 +103,13 @@ func (tx *Txn) CollectKeys() []string {
 
 func (tx *Txn) Done(status TxStatus) {
     tx.mutex.Lock()
-    defer tx.mutex.Unlock()
 
     assert.Must(status.Done())
     tx.status.Set(int32(status))
     tx.round.Add(1)
+
+    tx.mutex.Unlock()
+
     tx.doneCond.Broadcast()
     glog.V(10).Infof("Done txn(%s), status: '%s'", tx.String(), status.String())
 }
