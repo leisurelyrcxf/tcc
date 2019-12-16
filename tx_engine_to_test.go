@@ -2,6 +2,7 @@ package ts_promote
 
 import (
     "fmt"
+    "github.com/golang/glog"
     "sort"
     "testing"
 )
@@ -50,11 +51,14 @@ func TestNewTxEngineTO(t *testing.T) {
 
     round := 100000
     for i := 0; i < round; i++ {
-        fmt.Printf("\nRound: %d\n", i)
+        glog.Infof("\nRound: %d\n", i)
         err := executeOneRound(db, txns, initDBFunc)
         if err != nil {
             t.Errorf(err.Error())
             return
+        }
+        if i % 100 == 0 {
+            fmt.Printf("%d rounds finished\n", i)
         }
     }
 }

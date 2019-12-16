@@ -297,7 +297,8 @@ func (te *TxEngineTO) get(db *DB, txn *Txn, key string) (val float64, err error)
             break
         }
         if mwStatus == TxStatusFailedRetryable || mwStatus == TxStatusFailed {
-            assert.Must(false)
+            // Already failed, then this maxWriteTxn must have been rollbacked, retry.
+            continue
         }
 
         // Wait until depending txn finishes.
