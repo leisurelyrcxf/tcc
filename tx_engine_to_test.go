@@ -48,7 +48,7 @@ func TestNewTxEngineTO(t *testing.T) {
         db.ts.c.Set(0)
     }
 
-    round := 10000
+    round := 100000
     for i := 0; i < round; i++ {
         fmt.Printf("\nRound: %d\n", i)
         err := executeOneRound(db, txns, initDBFunc)

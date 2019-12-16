@@ -148,7 +148,7 @@ func (te *TxEngineTO) executeTxnsSingleThread(db *DB) error {
 func (te *TxEngineTO) committer(db *DB) {
     defer close(te.committerDone)
     for txn := range te.committingTxns {
-        for k, v := range txn.CommitData {
+        for k, v := range txn.GetCommitData() {
             vv, err := db.GetVersionedValue(k)
             if err == KeyNotExist {
                 db.SetUnsafe(k, v, txn.Timestamp)
@@ -163,8 +163,11 @@ func (te *TxEngineTO) committer(db *DB) {
                 // Safe here.
                 db.SetUnsafe(k, v, txn.Timestamp)
             } else {
-                glog.Warningf("ignored txn(%d, %d) committed value %f for key '%s', version_num_of_txn(%d) < committed_version(%d)",
+                msg := fmt.Sprintf("ignored txn(%d, %d) committed value %f for key '%s'," +
+                    " version_num_of_txn(%d) < committed_version(%d)",
                     txn.TxId, txn.Timestamp, v, k, txn.Timestamp, vv.Version)
+                glog.Warningf(msg)
+                panic(msg)
             }
         }
         glog.Infof("txn(%s) succeeded", txn.String())
@@ -183,26 +186,22 @@ func (te *TxEngineTO) executeSingleTx(db *DB, tx *Txn) error {
     }
 }
 
-func (te *TxEngineTO) _executeSingleTx(db *DB, tx *Txn) (err error) {
-    tx.Timestamp = db.ts.FetchTimestamp()
+func (te *TxEngineTO) _executeSingleTx(db *DB, txn *Txn) (err error) {
+    txn.Timestamp = db.ts.FetchTimestamp()
     defer func() {
         if err != nil {
-            te.rollback(tx, err)
+            te.rollback(txn, err)
         }
     }()
 
-    for _, op := range tx.Ops {
-        if err = te.executeOp(db, tx, op); err != nil {
+    for _, op := range txn.Ops {
+        if err = te.executeOp(db, txn, op); err != nil {
             return
         }
     }
-    err = te.commit(tx)
-    return
-}
 
-func (te *TxEngineTO) commit(txn *Txn) error {
-    te.committingTxns <-txn
-    return nil
+    te.committingTxns <- txn
+    return
 }
 
 func (te *TxEngineTO) rollback(tx *Txn, reason error) {
@@ -215,6 +214,7 @@ func (te *TxEngineTO) rollback(tx *Txn, reason error) {
         te.removeReadTxForKey(key, tx)
         te.removeWriteTxForKey(key, tx)
     }
+    tx.ClearCommitData()
     if reason == txStaleWrite {
         tx.Done(TxStatusFailedRetryable)
     } else if reason == txConflictErr {

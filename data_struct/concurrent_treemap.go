@@ -19,14 +19,14 @@ func NewConcurrentTreeMap(comparator utils.Comparator) *ConcurrentTreeMap {
 
 func (ctm *ConcurrentTreeMap) Put(key interface{}, val interface{}) {
     ctm.mutex.Lock()
-    defer ctm.mutex.Unlock()
     ctm.tm.Put(key, val)
+    ctm.mutex.Unlock()
 }
 
 func (ctm *ConcurrentTreeMap) Remove(key interface{}) {
     ctm.mutex.Lock()
-    defer ctm.mutex.Unlock()
     ctm.tm.Remove(key)
+    ctm.mutex.Unlock()
 }
 
 func (ctm *ConcurrentTreeMap) Max() (interface{}, interface{}) {

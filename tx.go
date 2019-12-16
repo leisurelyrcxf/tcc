@@ -60,10 +60,13 @@ func (s TxStatus) HasError() bool {
 var Counter = sync2.NewAtomicInt64(0)
 
 type Txn struct {
-    TxId int64
-    Ops []Op
-    CommitData map[string]float64
-    Timestamp int64
+    // Readonly fields
+    TxId       int64
+    Ops        []Op
+
+    // Changeable fields.
+    commitData map[string]float64
+    Timestamp  int64
 
     round    sync2.AtomicInt32
     status sync2.AtomicInt32
@@ -76,9 +79,9 @@ var emptyTx = &Txn{}
 
 func NewTx(ops []Op) *Txn {
     txn := &Txn{
-        TxId: Counter.Add(1),
-        Ops: ops,
-        CommitData: make(map[string]float64),
+        TxId:       Counter.Add(1),
+        Ops:        ops,
+        commitData: make(map[string]float64),
 
         round: sync2.NewAtomicInt32(0),
         status: sync2.NewAtomicInt32(int32(TxStatusInitialized)),
@@ -90,7 +93,7 @@ func NewTx(ops []Op) *Txn {
 }
 
 func (tx *Txn) AddCommitData(key string, val float64) {
-    tx.CommitData[key] = val
+    tx.commitData[key] = val
 }
 
 func (tx *Txn) CollectKeys() []string {
@@ -138,9 +141,17 @@ func (tx *Txn) WaitTillDone(round int32) {
 }
 
 func (tx *Txn) ReInit() {
+    assert.Must(len(tx.commitData) == 0)
     tx.status = sync2.NewAtomicInt32(int32(TxStatusInitialized))
-    tx.CommitData = make(map[string]float64)
     glog.Infof("ReInit txn(%s)", tx.String())
+}
+
+func (tx *Txn) GetCommitData() map[string]float64 {
+    return tx.commitData
+}
+
+func (tx *Txn) ClearCommitData() {
+    tx.commitData = make(map[string]float64)
 }
 
 func Later(a *Txn, b *Txn) *Txn {
