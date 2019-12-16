@@ -47,7 +47,7 @@ func getMaxTxForKey(key string, m *data_struct.ConcurrentMap) *Txn {
         }
         txn := obj.(*Txn)
         status := txn.GetStatus()
-        if status == TxStatusFailedRetryable || status == TxStatusFailed {
+        if status.HasError() {
             removeTxForKey(key, txn, m)
             return getMaxTxForKey(key, m)
         }
@@ -296,7 +296,7 @@ func (te *TxEngineTO) get(db *DB, txn *Txn, key string) (val float64, err error)
             //     either be discarded (if Thomas's write rule is not applied.
             break
         }
-        if mwStatus == TxStatusFailedRetryable || mwStatus == TxStatusFailed {
+        if mwStatus.HasError() {
             // Already failed, then this maxWriteTxn must have been rollbacked, retry.
             continue
         }
