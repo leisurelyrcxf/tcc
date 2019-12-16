@@ -8,6 +8,9 @@ import (
     "ts_promote/data_struct"
 )
 
+var txnConflictErr = NewTxnError(fmt.Errorf("txn conflict"), true)
+var txnStaleWriteErr = NewTxnError(fmt.Errorf("stale write"), true)
+
 type TxEngineTO struct {
     threadNum      int
     mw             data_struct.ConcurrentMap
@@ -31,9 +34,6 @@ func NewTxEngineTO(threadNum int, lm *LockManager) *TxEngineTO {
         errs:           make(chan *TxnError, threadNum * 100),
     }
 }
-
-var txConflictErr = NewTxnError(fmt.Errorf("txn conflict"), true)
-var txStaleWrite = NewTxnError(fmt.Errorf("stale write"), true)
 
 func getMaxTxForKey(key string, m *data_struct.ConcurrentMap) *Txn {
     if obj, ok := m.Get(key); !ok {
@@ -224,9 +224,9 @@ func (te *TxEngineTO) rollback(tx *Txn, reason error) {
         te.removeWriteTxForKey(key, tx)
     }
     tx.ClearCommitData()
-    if reason == txStaleWrite {
+    if reason == txnStaleWriteErr {
         tx.Done(TxStatusFailedRetryable)
-    } else if reason == txConflictErr {
+    } else if reason == txnConflictErr {
         tx.Done(TxStatusFailedRetryable)
     } else {
         tx.Done(TxStatusFailed)
@@ -319,7 +319,7 @@ func (te *TxEngineTO) get(db *DB, txn *Txn, key string) (val float64, err error)
     }
     if ts < vv.Version {
         // Read future versions, can't do anything
-        err = txConflictErr
+        err = txnConflictErr
         return
     }
     te.putReadTxForKey(key, Later(te.getMaxReadTxForKey(key), txn))
@@ -337,14 +337,14 @@ func (te *TxEngineTO) set(txn *Txn, key string, val float64) (err error) {
 
     // Write-read conflict
     if ts < te.getMaxReadTxForKey(key).GetTimestamp() {
-        err = txConflictErr
+        err = txnConflictErr
         return
     }
 
     // Write-write conflict
     // TODO Thomas's ellison rule.
     if ts < te.getMaxWriteTxForKey(key).GetTimestamp() {
-        err = txStaleWrite
+        err = txnStaleWriteErr
         return
     }
 
