@@ -35,7 +35,7 @@ func NewDBValue(val float64, version int64, writtenTxn *Txn) DBValue {
     }
 }
 
-func (db *DB) GetVersionedValue(key string) (DBValue, error) {
+func (db *DB) GetDBValue(key string) (DBValue, error) {
     if val, ok := db.values.Get(key); ok {
         return val.(DBValue), nil
     }

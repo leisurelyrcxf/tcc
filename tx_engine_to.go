@@ -156,7 +156,7 @@ func (te *TxEngineTO) committer(db *DB) {
     for txn := range te.committingTxns {
         ts := txn.GetTimestamp()
         for k, v := range txn.GetCommitData() {
-            vv, err := db.GetVersionedValue(k)
+            vv, err := db.GetDBValue(k)
             if err == KeyNotExist {
                 // Safe here.
                 db.SetUnsafe(k, v, ts, txn)
@@ -312,7 +312,7 @@ func (te *TxEngineTO) get(db *DB, txn *Txn, key string) (val float64, err error)
         db.lm.lockKey(key)
     }
 
-    vv, dbErr := db.GetVersionedValue(key)
+    vv, dbErr := db.GetDBValue(key)
     if dbErr != nil {
         err = NewTxnError(dbErr, false)
         return
