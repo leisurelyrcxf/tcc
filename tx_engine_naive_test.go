@@ -7,8 +7,8 @@ import (
 
 func TestTxEngineNaive_ExecuteTxns(t *testing.T) {
     db := NewDB()
-    db.SetUnsafe("a", 1.0, 0)
-    db.SetUnsafe("b", 2.0, 0)
+    db.SetUnsafe("a", 1.0, 0, nil)
+    db.SetUnsafe("b", 2.0, 0, nil)
 
     txns := []*Txn{NewTx(
         []Op {{

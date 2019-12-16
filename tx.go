@@ -71,6 +71,8 @@ type Txn struct {
     round    sync2.AtomicInt32
     status sync2.AtomicInt32
 
+    ReadVersion int64
+
     mutex sync.Mutex
     cond  sync.Cond
 }
@@ -85,6 +87,8 @@ func NewTx(ops []Op) *Txn {
 
         round: sync2.NewAtomicInt32(0),
         status: sync2.NewAtomicInt32(int32(TxStatusInitialized)),
+
+        ReadVersion: 0,
     }
     txn.cond = sync.Cond{
         L: &txn.mutex,
@@ -118,8 +122,11 @@ func (tx *Txn) SetStatusLocked(status TxStatus) {
 
 func (tx *Txn) Start(ts int64) {
     tx.mutex.Lock()
+
     tx.timestamp.Set(ts)
     tx.SetStatusLocked(TxStatusPending)
+    tx.ReadVersion = 0
+
     tx.mutex.Unlock()
 
     tx.cond.Broadcast()
@@ -151,7 +158,7 @@ func (tx *Txn) IncrRound() {
     tx.round.Add(1)
 }
 
-func (tx *Txn) WaitUntilDone(round int32, waiter *Txn) {
+func (tx *Txn) WaitUntilDoneOrRestarted(round int32, waiter *Txn) {
     tx.mutex.Lock()
 
     glog.V(5).Infof("txn(%s) wait for txn(%s)'s %dth round to finish", waiter.String(), tx.String(), round)
@@ -170,6 +177,25 @@ func (tx *Txn) WaitUntilDone(round int32, waiter *Txn) {
     tx.mutex.Unlock()
 }
 
+func (tx *Txn) WaitUntilDone(waiter *Txn) {
+    tx.mutex.Lock()
+
+    glog.V(5).Infof("txn(%s) wait for txn(%s)'s to be done", waiter.String(), tx.String())
+    loopTimes := 0
+    for !tx.GetStatus().Done()  {
+        if loopTimes > 0 {
+            glog.V(5).Infof("txn(%s) wait for txn(%s) to be done", waiter.String(), tx.String())
+        }
+        tx.cond.Wait()
+        glog.V(5).Infof("txn(%s) waited once txn(%s) done successfully", waiter.String(), tx.String())
+        loopTimes++
+    }
+    if loopTimes == 0 {
+        glog.V(5).Infof("txn(%s) waited txn(%s) done successfully", waiter.String(), tx.String())
+    }
+    tx.mutex.Unlock()
+}
+
 func (tx *Txn) Reset() {
     tx.mutex.Lock()
 
@@ -178,6 +204,8 @@ func (tx *Txn) Reset() {
 
     tx.round.Set(0)
     tx.SetStatusLocked(TxStatusInitialized)
+
+    tx.ReadVersion = 0
 
     tx.mutex.Unlock()
 

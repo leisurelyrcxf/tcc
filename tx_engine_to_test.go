@@ -44,8 +44,8 @@ func TestNewTxEngineTO(t *testing.T) {
     }
 
     initDBFunc := func (db *DB) {
-        db.SetUnsafe("a", 0, 0)
-        db.SetUnsafe("b", 1, 0)
+        db.SetUnsafe("a", 0, 0, nil)
+        db.SetUnsafe("b", 1, 0, nil)
         db.ts.c.Set(0)
     }
 

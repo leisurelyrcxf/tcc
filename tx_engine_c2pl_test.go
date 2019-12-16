@@ -39,8 +39,8 @@ func TestNewTxEngineC2PL(t *testing.T) {
 
     db := NewDB()
     TxTest(t, db, txns, func (db *DB) {
-        db.SetUnsafe("a", 0, 0)
-        db.SetUnsafe("b", 1, 0)
+        db.SetUnsafe("a", 0, 0, nil)
+        db.SetUnsafe("b", 1, 0, nil)
         db.ts.c.Set(0)
     }, func() TxEngine {
         return NewTxEngineC2PL(4)

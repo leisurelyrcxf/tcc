@@ -72,14 +72,14 @@ func (te *TxEngineC2PL) executeSingleTx(db* DB, tx *Txn) error {
     }()
 
     for _, op := range tx.Ops {
-        if err := te.executeOp(db, op); err != nil {
+        if err := te.executeOp(db, tx, op); err != nil {
             return err
         }
     }
     return nil
 }
 
-func (te *TxEngineC2PL) executeOp(db* DB, op Op) error {
+func (te *TxEngineC2PL) executeOp(db* DB, tx *Txn, op Op) error {
     val, err := db.Get(op.key)
     if err != nil {
         return NewTxnError(fmt.Errorf("key '%s' not exist, detail: '%s'", op.key, err), false)
@@ -92,6 +92,6 @@ func (te *TxEngineC2PL) executeOp(db* DB, op Op) error {
     case IncrMultiply:
         val *= op.operatorNum
     }
-    db.SetUnsafe(op.key, val, 0)
+    db.SetUnsafe(op.key, val, 0, tx)
     return nil
 }

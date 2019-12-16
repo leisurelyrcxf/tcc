@@ -159,7 +159,7 @@ func (te *TxEngineTO) committer(db *DB) {
             vv, err := db.GetVersionedValue(k)
             if err == KeyNotExist {
                 // Safe here.
-                db.SetUnsafe(k, v, ts)
+                db.SetUnsafe(k, v, ts, txn)
                 continue
             }
             if err != nil {
@@ -169,7 +169,7 @@ func (te *TxEngineTO) committer(db *DB) {
             }
             if ts >= vv.Version {
                 // Safe here.
-                db.SetUnsafe(k, v, ts)
+                db.SetUnsafe(k, v, ts, txn)
             } else {
                 msg := fmt.Sprintf("ignored txn(%d, %d) committed value %f for key '%s'," +
                     " version_num_of_txn(%d) < committed_version(%d)",
@@ -308,7 +308,7 @@ func (te *TxEngineTO) get(db *DB, txn *Txn, key string) (val float64, err error)
            continue
         }
         db.lm.unlockKey(key)
-        maxWriteTxn.WaitUntilDone(round, txn)
+        maxWriteTxn.WaitUntilDoneOrRestarted(round, txn)
         db.lm.lockKey(key)
     }
 
@@ -317,10 +317,19 @@ func (te *TxEngineTO) get(db *DB, txn *Txn, key string) (val float64, err error)
         err = NewTxnError(dbErr, false)
         return
     }
-    if ts < vv.Version {
+    if (txn.ReadVersion == 0 && ts < vv.Version) || (txn.ReadVersion > 0 && txn.ReadVersion < vv.Version) {
         // Read future versions, can't do anything
         err = txnConflictErr
         return
+    }
+    writtenTxn := vv.WrittenTxn
+    if writtenTxn != nil && !writtenTxn.GetStatus().Done() {
+        assert.Must(txn.ReadVersion == 0)
+        // Committing, wait till valid.
+        writtenTxn.WaitUntilDone(txn)
+    }
+    if txn.ReadVersion == 0 {
+        txn.ReadVersion = vv.Version
     }
     te.putReadTxForKey(key, txn)
     val = vv.Value
@@ -342,8 +351,8 @@ func (te *TxEngineTO) set(txn *Txn, key string, val float64) (err error) {
     }
 
     // Write-write conflict
-    // TODO Thomas's ellison rule.
     if ts < te.getMaxWriteTxForKey(key).GetTimestamp() {
+        // TODO Apply Thomas's ellison rule.
         err = txnStaleWriteErr
         return
     }
