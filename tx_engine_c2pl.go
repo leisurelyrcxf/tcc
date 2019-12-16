@@ -8,19 +8,19 @@ import (
 
 type TxEngineC2PL struct {
     threadNum int
-    txns chan *Tx
-    errs chan error
+    txns chan *Txn
+    errs chan *TxnError
 }
 
 func NewTxEngineC2PL(threadNum int) *TxEngineC2PL {
     return &TxEngineC2PL{
         threadNum: threadNum,
-        txns: make(chan *Tx, threadNum),
-        errs: make(chan error, threadNum),
+        txns: make(chan *Txn, threadNum),
+        errs: make(chan *TxnError, threadNum),
     }
 }
 
-func (te *TxEngineC2PL) ExecuteTxns(db* DB, txns []*Tx) error {
+func (te *TxEngineC2PL) ExecuteTxns(db* DB, txns []*Txn) error {
     go func() {
         for _, txn := range txns {
             te.txns <- txn
@@ -34,7 +34,7 @@ func (te *TxEngineC2PL) ExecuteTxns(db* DB, txns []*Tx) error {
         go func() {
             defer wg.Done()
             if err := te.executeTxns(db); err != nil {
-                te.errs <- err
+                te.errs <- err.(*TxnError)
             }
         }()
     }
@@ -58,7 +58,9 @@ func (te *TxEngineC2PL) executeTxns(db* DB) error {
     return nil
 }
 
-func (te *TxEngineC2PL) executeSingleTx(db* DB, tx *Tx) error {
+func (te *TxEngineC2PL) executeSingleTx(db* DB, tx *Txn) error {
+    tx.Timestamp = db.ts.FetchTimestamp()
+
     keys := tx.CollectKeys()
     sort.Strings(keys)
     for _, key := range keys {
@@ -79,9 +81,9 @@ func (te *TxEngineC2PL) executeSingleTx(db* DB, tx *Tx) error {
 }
 
 func (te *TxEngineC2PL) executeOp(db* DB, op Op) error {
-    val, err := db.get(op.key)
+    val, err := db.Get(op.key)
     if err != nil {
-        return fmt.Errorf("key '%s' not exist, detail: '%s'", op.key, err)
+        return NewTxnError(fmt.Errorf("key '%s' not exist, detail: '%s'", op.key, err), false)
     }
     switch op.typ {
     case IncrMinus:
@@ -91,18 +93,6 @@ func (te *TxEngineC2PL) executeOp(db* DB, op Op) error {
     case IncrMultiply:
         val *= op.operatorNum
     }
-    db.set(op.key, val)
+    db.SetUnsafe(op.key, val, 0)
     return nil
-}
-
-func (te *TxEngineC2PL) get(db* DB, key string) (float64, error) {
-    db.lm.lockKey(key)
-    defer db.lm.unlockKey(key)
-    return db.get(key)
-}
-
-func (te *TxEngineC2PL) set(db* DB, key string, val float64) {
-    db.lm.lockKey(key)
-    defer db.lm.unlockKey(key)
-    db.set(key, val)
 }

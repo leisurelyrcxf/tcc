@@ -7,17 +7,17 @@ import (
 
 type concurrentMapPartition struct {
 	mutex sync.RWMutex
-	m     map[string]float64
+	m     map[string]interface{}
 }
 
-func (cmp *concurrentMapPartition) get(key string) (float64, bool) {
+func (cmp *concurrentMapPartition) get(key string) (interface{}, bool) {
 	cmp.mutex.RLock()
 	defer cmp.mutex.RUnlock()
 	val, ok := cmp.m[key]
 	return val, ok
 }
 
-func (cmp *concurrentMapPartition) set(key string, val float64) {
+func (cmp *concurrentMapPartition) set(key string, val interface{}) {
 	cmp.mutex.Lock()
 	defer cmp.mutex.Unlock()
 	cmp.m[key] = val
@@ -36,7 +36,7 @@ type ConcurrentMap struct {
 func NewConcurrentMap(partitionNum int) ConcurrentMap {
 	cm := ConcurrentMap{partitions: make([]concurrentMapPartition, partitionNum)}
 	for i := 0; i < partitionNum; i++ {
-		cm.partitions[i].m = make(map[string]float64)
+		cm.partitions[i].m = make(map[string]interface{})
 	}
 	return cm
 }
@@ -57,11 +57,11 @@ func (cmp *ConcurrentMap) RUnlock() {
 	}
 }
 
-func (cmp *ConcurrentMap) Get(key string) (float64, bool) {
+func (cmp *ConcurrentMap) Get(key string) (interface{}, bool) {
 	return cmp.partitions[cmp.hash(key)].get(key)
 }
 
-func (cmp *ConcurrentMap) Set(key string, val float64) {
+func (cmp *ConcurrentMap) Set(key string, val interface{}) {
 	cmp.partitions[cmp.hash(key)].set(key, val)
 }
 
@@ -69,7 +69,7 @@ func (cmp *ConcurrentMap) Del(key string) {
 	cmp.partitions[cmp.hash(key)].del(key)
 }
 
-func (cmp *ConcurrentMap) ForEach(cb func(string, float64)) {
+func (cmp *ConcurrentMap) ForEach(cb func(string, interface{})) {
 	cmp.RLock()
 	for _, partition := range cmp.partitions {
 		for key, val := range partition.m {

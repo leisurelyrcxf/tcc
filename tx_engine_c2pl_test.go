@@ -2,14 +2,8 @@ package ts_promote
 
 import "testing"
 
-func initDB(db *DB) {
-    db.set("a", 0)
-    db.set("b", 1)
-    db.ts.c.Set(0)
-}
-
 func TestNewTxEngineC2PL(t *testing.T) {
-    txns := []*Tx{NewTx(
+    txns := []*Txn{NewTx(
         []Op {{
             key: "a",
             typ: IncrAdd,
@@ -43,7 +37,12 @@ func TestNewTxEngineC2PL(t *testing.T) {
         ),
     }
 
-    TxTest(t, txns, initDB, func() TxEngine {
+    db := NewDB()
+    TxTest(t, db, txns, func (db *DB) {
+        db.SetUnsafe("a", 0, 0)
+        db.SetUnsafe("b", 1, 0)
+        db.ts.c.Set(0)
+    }, func() TxEngine {
         return NewTxEngineC2PL(4)
     }, 10000)
 }

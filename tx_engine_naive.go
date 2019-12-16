@@ -6,7 +6,7 @@ type TxEngineNaive struct {
 
 }
 
-func (te *TxEngineNaive) ExecuteTxns(db* DB, txns []*Tx) error {
+func (te *TxEngineNaive) ExecuteTxns(db* DB, txns []*Txn) error {
     for _, tx := range txns {
         if err := te.executeSingleTx(db, tx); err != nil {
             return err
@@ -15,7 +15,7 @@ func (te *TxEngineNaive) ExecuteTxns(db* DB, txns []*Tx) error {
     return nil
 }
 
-func (te *TxEngineNaive) executeSingleTx(db* DB, tx *Tx) error {
+func (te *TxEngineNaive) executeSingleTx(db* DB, tx *Txn) error {
     tx.Timestamp = db.ts.FetchTimestamp()
     for _, op := range tx.Ops {
         if err := te.executeOp(db, op); err != nil {
@@ -26,9 +26,9 @@ func (te *TxEngineNaive) executeSingleTx(db* DB, tx *Tx) error {
 }
 
 func (te *TxEngineNaive) executeOp(db* DB, op Op) error {
-    val, err := db.get(op.key)
+    val, err := db.Get(op.key)
     if err != nil {
-        return fmt.Errorf("key '%s' not exist, detail: '%s'", op.key, err)
+        return NewTxnError(fmt.Errorf("key '%s' not exist, detail: '%s'", op.key, err), false)
     }
     switch op.typ {
     case IncrMinus:
@@ -38,6 +38,6 @@ func (te *TxEngineNaive) executeOp(db* DB, op Op) error {
     case IncrMultiply:
         val *= op.operatorNum
     }
-    db.set(op.key, val)
+    db.SetUnsafe(op.key, val, 0)
     return nil
 }

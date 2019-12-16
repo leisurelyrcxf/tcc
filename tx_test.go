@@ -5,12 +5,20 @@ import (
     "testing"
 )
 
-func GetAllPossibleSerializableResult(db *DB, txns []*Tx, initDBFunc func(db *DB)) ([]map[string]float64, error) {
-    initDBFunc(db)
+func Exec() (err error) {
+    return error(err)
+}
 
-    for _, txn := range txns {
-        txn.Timestamp = db.ts.FetchTimestamp()
+func TestTxnError(t *testing.T) {
+    err := Exec()
+    fmt.Println(err)
+    if err != nil {
+        t.Errorf("not nil")
     }
+}
+
+func GetAllPossibleSerializableResult(db *DB, txns []*Txn, initDBFunc func(db *DB)) ([]map[string]float64, error) {
+    initDBFunc(db)
 
     var allPossibleExecuteResults []map[string]float64
     var ten TxEngineNaive
@@ -22,14 +30,12 @@ func GetAllPossibleSerializableResult(db *DB, txns []*Tx, initDBFunc func(db *DB
 
         initDBFunc(db)
         if err := ten.ExecuteTxns(db, oneOrderTxns); err != nil {
-            err = fmt.Errorf("execute failed for oneOrderTxns, detail: '%s'", err.Error())
-            fmt.Println(err.Error())
-            return nil, err
+            newErr := fmt.Errorf("execute failed for oneOrderTxns, detail: '%s'", err.Error())
+            fmt.Println(newErr.Error())
+            return nil, newErr
         }
 
-        oneResult := make(map[string]float64)
-        oneResult["a"], _ = db.get("a")
-        oneResult["b"], _ = db.get("b")
+        oneResult := db.Snapshot()
         fmt.Printf("One possible serialize order: %s. Result: %s\n", SerializeTxns(oneOrderTxns), SerializeMap(oneResult))
         allPossibleExecuteResults = append(allPossibleExecuteResults, oneResult)
     }
@@ -37,28 +43,14 @@ func GetAllPossibleSerializableResult(db *DB, txns []*Tx, initDBFunc func(db *DB
     return allPossibleExecuteResults, nil
 }
 
-func TxTest(t *testing.T, txns []*Tx, initDBFunc func(*DB),
+func TxTest(t *testing.T, db *DB, txns []*Txn, initDBFunc func(*DB),
     txnEngineConstructor func() TxEngine, round int) {
-    db := NewDB()
     initDBFunc(db)
 
-    allPossibleExecuteResults, err := GetAllPossibleSerializableResult(db, txns, initDB)
+    allPossibleExecuteResults, err := GetAllPossibleSerializableResult(db, txns, initDBFunc)
     if err != nil {
         t.Errorf(err.Error())
         return
-    }
-
-    checkEqual := func(db *DB, m map[string]float64) bool {
-        for k, v := range m {
-            if dbVal, err := db.get(k); err != nil {
-                return false
-            } else {
-                if dbVal != v {
-                    return false
-                }
-            }
-        }
-        return true
     }
 
     checkResult := func (db* DB) bool {
@@ -74,8 +66,11 @@ func TxTest(t *testing.T, txns []*Tx, initDBFunc func(*DB),
         initDBFunc(db)
         for _, txn := range txns {
             txn.Timestamp = 0
+            txn.ReInit()
         }
-        if err := txEngineTOExecuteTxnsOneRound(db, txns, txnEngineConstructor); err != nil {
+
+        fmt.Printf("\nRound: %d\n", i)
+        if err := executeTxns(db, txns, txnEngineConstructor); err != nil {
             t.Errorf(err.Error())
             return
         }
@@ -86,6 +81,6 @@ func TxTest(t *testing.T, txns []*Tx, initDBFunc func(*DB),
     }
 }
 
-func txEngineTOExecuteTxnsOneRound(db* DB, txns []*Tx, txnEngineConstructor func() TxEngine) error {
+func executeTxns(db* DB, txns []*Txn, txnEngineConstructor func() TxEngine) error {
     return txnEngineConstructor().ExecuteTxns(db, txns)
 }

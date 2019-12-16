@@ -8,7 +8,7 @@ import (
 func TestPermutate(t *testing.T) {
     db := NewDB()
 
-    txns := []*Tx{NewTx(
+    txns := []*Txn{NewTx(
         []Op {{
             key: "a",
             typ: IncrAdd,

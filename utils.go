@@ -5,9 +5,9 @@ import (
     "strconv"
 )
 
-func Permutate(txns []*Tx) chan[]*Tx {
+func Permutate(txns []*Txn) chan[]*Txn {
     // Must be empty here
-    ch := make(chan[]*Tx)
+    ch := make(chan[]*Txn)
     go func() {
         permutate(txns, 0, ch)
         close(ch)
@@ -15,7 +15,7 @@ func Permutate(txns []*Tx) chan[]*Tx {
     return ch
 }
 
-func permutate(txns []*Tx, idx int, ch chan[]*Tx) {
+func permutate(txns []*Txn, idx int, ch chan[]*Txn) {
     l := len(txns)
     if idx == l - 1 {
         ch <-txns
@@ -30,17 +30,17 @@ func permutate(txns []*Tx, idx int, ch chan[]*Tx) {
     }
 }
 
-func swap(txns []*Tx, i, j int) {
+func swap(txns []*Txn, i, j int) {
     txns[i], txns[j] = txns[j], txns[i]
 }
 
-func SerializeTxns(txns []*Tx) string {
+func SerializeTxns(txns []*Txn) string {
     bytes := make([]byte, 0, 100)
     for i, txn := range txns {
         if i >= 1 {
-            bytes = append(bytes, fmt.Sprintf(", %d", txn.Timestamp)...)
+            bytes = append(bytes, fmt.Sprintf(", %d", txn.TxId)...)
         } else {
-            bytes = append(bytes, fmt.Sprintf("%d", txn.Timestamp)...)
+            bytes = append(bytes, fmt.Sprintf("%d", txn.TxId)...)
         }
     }
     return string(bytes)
@@ -60,4 +60,36 @@ func SerializeMap(m map[string]float64) string {
     }
     bytes = append(bytes, '}')
     return string(bytes)
+}
+
+func Min(a int64, b int64) int64 {
+    if a > b {
+        return b
+    }
+    return a
+}
+
+func Max(a int64, b int64) int64 {
+    if a > b {
+        return a
+    }
+    return b
+}
+
+func checkEqual(db *DB, m map[string]float64) bool {
+    return areEqualMaps(db.Snapshot(), m)
+}
+
+func areEqualMaps(m1 map[string]float64, m2 map[string]float64) bool {
+    if len(m1) != len(m2) {
+        return false
+    }
+    for k, v := range m2 {
+        if dbVal, ok := m1[k]; !ok {
+            return false
+        } else if dbVal != v {
+            return false
+        }
+    }
+    return true
 }

@@ -7,10 +7,10 @@ import (
 
 func TestTxEngineNaive_ExecuteTxns(t *testing.T) {
     db := NewDB()
-    db.set("a", 1.0)
-    db.set("b", 2.0)
+    db.SetUnsafe("a", 1.0, 0)
+    db.SetUnsafe("b", 2.0, 0)
 
-    txns := []*Tx{NewTx(
+    txns := []*Txn{NewTx(
         []Op {{
             key: "a",
             typ: IncrAdd,
@@ -48,12 +48,12 @@ func TestTxEngineNaive_ExecuteTxns(t *testing.T) {
         t.Errorf(err.Error())
         return
     }
-    if val, _ := db.get("a"); val != 4 {
+    if val, _ := db.Get("a"); val != 4 {
         t.Errorf("value for a failed")
         return
     }
 
-    if val, _ := db.get("b"); val != 8 {
+    if val, _ := db.Get("b"); val != 8 {
         t.Errorf("value for a failed")
         return
     }
