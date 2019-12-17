@@ -180,6 +180,8 @@ func (te *TxEngineTO) committer(db *DB) {
         }
         glog.Infof("txn(%s) succeeded", txn.String())
         txn.Done(TxStatusSucceeded)
+        // Mark this version visible
+        db.AddVersion(ts)
     }
 }
 

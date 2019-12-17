@@ -59,6 +59,9 @@ func (db *DB) Get(key string) (float64, error) {
 
 func (db *DB) SetUnsafe(key string, val float64, version int64, writtenTxn *Txn) {
     db.values.Set(key, NewDBValue(val, version, writtenTxn))
+}
+
+func (db *DB) AddVersion(version int64) {
     db.versions.Put(version, nil)
 }
 
