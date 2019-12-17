@@ -63,11 +63,11 @@ func (te *TxEngineC2PL) executeSingleTx(db* DB, tx *Txn) error {
     keys := tx.CollectKeys()
     sort.Strings(keys)
     for _, key := range keys {
-        db.lm.lockKey(key)
+        db.lm.Lock(key)
     }
     defer func() {
         for i := len(keys) - 1; i >= 0; i-- {
-            db.lm.unlockKey(keys[i])
+            db.lm.Unlock(keys[i])
         }
     }()
 

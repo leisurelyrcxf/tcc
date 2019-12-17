@@ -21,6 +21,7 @@ type TxEngineTO struct {
     committingTxns chan *Txn
     committerDone  chan struct{}
     errs           chan *TxnError
+    mutex          sync.Mutex
 }
 
 func NewTxEngineTO(threadNum int, lm *LockManager) *TxEngineTO {
@@ -64,17 +65,26 @@ func (te *TxEngineTO) getMaxWriteTxForKey(key string) *Txn {
     return getMaxTxForKey(key, &te.mw)
 }
 
-func putTxForKey(key string, tx *Txn, m *data_struct.ConcurrentMap) {
+func putTxForKey(key string, tx *Txn, m *data_struct.ConcurrentMap, te *TxEngineTO) {
     obj, _ := m.Get(key)
 
     var tm *data_struct.ConcurrentTreeMap
     if obj == nil {
-        tm = data_struct.NewConcurrentTreeMap(func(a, b interface{}) int {
-            ta := a.(*Txn)
-            tb := b.(*Txn)
-            return int(ta.GetTimestamp() - tb.GetTimestamp())
-        })
-        m.Set(key, tm)
+        te.mutex.Lock()
+
+        obj, _ = m.Get(key)
+        if obj == nil {
+            tm = data_struct.NewConcurrentTreeMap(func(a, b interface{}) int {
+                ta := a.(*Txn)
+                tb := b.(*Txn)
+                return int(ta.GetTimestamp() - tb.GetTimestamp())
+            })
+            m.Set(key, tm)
+        } else {
+            tm = obj.(*data_struct.ConcurrentTreeMap)
+        }
+
+        te.mutex.Unlock()
     } else {
         tm = obj.(*data_struct.ConcurrentTreeMap)
     }
@@ -83,11 +93,11 @@ func putTxForKey(key string, tx *Txn, m *data_struct.ConcurrentMap) {
 }
 
 func (te *TxEngineTO) putReadTxForKey(key string, tx *Txn) {
-    putTxForKey(key, tx, &te.mr)
+    putTxForKey(key, tx, &te.mr, te)
 }
 
 func (te *TxEngineTO) putWriteTxForKey(key string, tx *Txn) {
-    putTxForKey(key, tx, &te.mw)
+    putTxForKey(key, tx, &te.mw, te)
 }
 
 func removeTxForKey(key string, tx *Txn, m *data_struct.ConcurrentMap) {
@@ -264,8 +274,8 @@ func (te *TxEngineTO) executeIncrOp(db *DB, txn *Txn, op Op) error {
 }
 
 func (te *TxEngineTO) get(db *DB, txn *Txn, key string) (val float64, err error) {
-    te.lm.lockKey(key)
-    defer te.lm.unlockKey(key)
+    te.lm.RLock(key)
+    defer te.lm.RUnlock(key)
 
     glog.Infof("txn(%s) want to get key '%s'", txn.String(), key)
     // ts won't change because only this thread can modify it's value.
@@ -321,9 +331,9 @@ func (te *TxEngineTO) get(db *DB, txn *Txn, key string) (val float64, err error)
             maxWriteTxn.GetTimestamp() != maxWriteTxnTs {
            continue
         }
-        db.lm.unlockKey(key)
+        db.lm.RUnlock(key)
         maxWriteTxn.WaitUntilDoneOrRestarted(round, txn)
-        db.lm.lockKey(key)
+        db.lm.RLock(key)
     }
 
     vv, dbErr := db.GetDBValue(key)
@@ -354,8 +364,8 @@ func (te *TxEngineTO) get(db *DB, txn *Txn, key string) (val float64, err error)
 }
 
 func (te *TxEngineTO) set(txn *Txn, key string, val float64) (err error) {
-    te.lm.lockKey(key)
-    defer te.lm.unlockKey(key)
+    te.lm.Lock(key)
+    defer te.lm.Unlock(key)
     glog.Infof("txn(%s) want to set key '%s' to value %f", txn.String(), key, val)
 
     ts := txn.GetTimestamp()
