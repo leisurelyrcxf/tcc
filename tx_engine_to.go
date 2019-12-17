@@ -189,7 +189,7 @@ func (te *TxEngineTO) committer(db *DB) {
         }
         glog.Infof("txn(%s) succeeded", txn.String())
         txn.Done(TxStatusSucceeded)
-        // Mark this version visible
+        // Mark this version visible, this is an atomic commit.
         db.AddVersion(ts)
     }
 }
@@ -341,21 +341,23 @@ func (te *TxEngineTO) get(db *DB, txn *Txn, key string) (val float64, err error)
         err = NewTxnError(dbErr, false)
         return
     }
-    if (txn.ReadVersion == 0 && ts < vv.Version) || (txn.ReadVersion > 0 && txn.ReadVersion < vv.Version) {
+
+    if txn.ReadVersion == 0 {
+        txn.ReadVersion = db.FindMaxVersion(func(version int64) bool {
+            return version <= ts
+        })
+    }
+    if txn.ReadVersion < vv.Version {
         // Read future versions, can't do anything
         err = txnErrConflict
         return
     }
     writtenTxn := vv.WrittenTxn
     if writtenTxn != nil && !writtenTxn.GetStatus().Done() {
-        assert.Must(txn.ReadVersion == 0)
+        // Shouldn't be possible since commit is atomic.
+        assert.Must(false)
         // Committing, wait till valid.
-        writtenTxn.WaitUntilDone(txn)
-    }
-    if txn.ReadVersion == 0 {
-        txn.ReadVersion = db.FindMaxVersion(func(version int64) bool {
-            return version <= ts
-        })
+        //writtenTxn.WaitUntilDone(txn)
     }
     te.putReadTxForKey(key, txn, db.lm)
     val = vv.Value
@@ -385,7 +387,7 @@ func (te *TxEngineTO) set(txn *Txn, key string, val float64, timeServ *TimeServe
                 status := maxWriteTxn.GetStatus()
                 if status.Done() {
                     if status.Succeeded() {
-                        // Apply Thomas's ellison rule.
+                        // Apply Thomas's write rule.
                         return
                     }
                     //assert.Must(status.HasError())
@@ -396,6 +398,8 @@ func (te *TxEngineTO) set(txn *Txn, key string, val float64, timeServ *TimeServe
             if maxWriteTxn.GetStatus().HasError() {
                 continue
             }
+            // Since maxWriteTxn's status is not known, it could rollback later,
+            // ellipsis not safe here.
             return txnErrStaleWrite
         } else {
             break

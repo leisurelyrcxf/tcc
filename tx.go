@@ -242,6 +242,7 @@ func (tx *Txn) CheckFirstOp(ts *TimeServer) {
     if !tx.firstOpMet {
         tx.firstOpMet = true
         tx.timestamp.Set(ts.FetchTimestamp())
+        tx.cond.Broadcast()
     }
 }
 
