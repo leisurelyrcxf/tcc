@@ -21,7 +21,6 @@ type TxEngineTO struct {
     committingTxns chan *Txn
     committerDone  chan struct{}
     errs           chan *TxnError
-    mutex          sync.Mutex
 }
 
 func NewTxEngineTO(threadNum int, lm *LockManager) *TxEngineTO {
@@ -65,12 +64,12 @@ func (te *TxEngineTO) getMaxWriteTxForKey(key string) *Txn {
     return getMaxTxForKey(key, &te.mw)
 }
 
-func putTxForKey(key string, tx *Txn, m *data_struct.ConcurrentMap, te *TxEngineTO) {
+func putTxForKey(key string, tx *Txn, m *data_struct.ConcurrentMap, lm *LockManager) {
     obj, _ := m.Get(key)
 
     var tm *data_struct.ConcurrentTreeMap
     if obj == nil {
-        te.mutex.Lock()
+        lm.UpgradeLock(key)
 
         obj, _ = m.Get(key)
         if obj == nil {
@@ -84,7 +83,7 @@ func putTxForKey(key string, tx *Txn, m *data_struct.ConcurrentMap, te *TxEngine
             tm = obj.(*data_struct.ConcurrentTreeMap)
         }
 
-        te.mutex.Unlock()
+        lm.DegradeLock(key)
     } else {
         tm = obj.(*data_struct.ConcurrentTreeMap)
     }
@@ -92,12 +91,12 @@ func putTxForKey(key string, tx *Txn, m *data_struct.ConcurrentMap, te *TxEngine
     tm.Put(tx, nil)
 }
 
-func (te *TxEngineTO) putReadTxForKey(key string, tx *Txn) {
-    putTxForKey(key, tx, &te.mr, te)
+func (te *TxEngineTO) putReadTxForKey(key string, tx *Txn, lm *LockManager) {
+    putTxForKey(key, tx, &te.mr, lm)
 }
 
 func (te *TxEngineTO) putWriteTxForKey(key string, tx *Txn) {
-    putTxForKey(key, tx, &te.mw, te)
+    putTxForKey(key, tx, &te.mw, nil)
 }
 
 func removeTxForKey(key string, tx *Txn, m *data_struct.ConcurrentMap) {
@@ -357,7 +356,7 @@ func (te *TxEngineTO) get(db *DB, txn *Txn, key string) (val float64, err error)
             return version <= ts
         })
     }
-    te.putReadTxForKey(key, txn)
+    te.putReadTxForKey(key, txn, db.lm)
     val = vv.Value
     glog.Infof("txn(%s) got value %f for key '%s'", txn.String(), val, key)
     return

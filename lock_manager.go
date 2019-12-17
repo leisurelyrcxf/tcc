@@ -6,30 +6,57 @@ import (
 )
 
 type LockManager struct {
-    mutexes []sync.RWMutex
+    rwMutexes []sync.RWMutex
+    mutexes []sync.Mutex
 }
 
+const defaultSlotNum = 1024
+
 func NewLockManager() *LockManager {
-    return &LockManager{mutexes:make([]sync.RWMutex, 1024)}
+    lm := &LockManager{
+        rwMutexes: make([]sync.RWMutex, defaultSlotNum),
+        mutexes:   make([]sync.Mutex, defaultSlotNum),
+    }
+    return lm
 }
 
 func (lm *LockManager) hash(key string) int {
-    return int(crc32.ChecksumIEEE([]byte(key))) % len(lm.mutexes)
+    return int(crc32.ChecksumIEEE([]byte(key))) % len(lm.rwMutexes)
 }
 
 func (lm *LockManager) Lock(key string) {
-    lm.mutexes[lm.hash(key)].Lock()
+    slotIdx := lm.hash(key)
+    lm.rwMutexes[slotIdx].Lock()
 }
 
 func (lm *LockManager) Unlock(key string) {
-    lm.mutexes[lm.hash(key)].Unlock()
+    slotIdx := lm.hash(key)
+    lm.rwMutexes[slotIdx].Unlock()
 }
 
 func (lm *LockManager) RLock(key string) {
-    lm.mutexes[lm.hash(key)].RLock()
+    slotIdx := lm.hash(key)
+    lm.rwMutexes[slotIdx].RLock()
 }
 
 func (lm *LockManager) RUnlock(key string) {
-    lm.mutexes[lm.hash(key)].RUnlock()
+    slotIdx := lm.hash(key)
+    lm.rwMutexes[slotIdx].RUnlock()
+}
+
+func (lm *LockManager) UpgradeLock(key string) {
+    if lm == nil {
+        return
+    }
+    slotIdx := lm.hash(key)
+    lm.mutexes[slotIdx].Lock()
+}
+
+func (lm *LockManager) DegradeLock(key string) {
+    if lm == nil {
+        return
+    }
+    slotIdx := lm.hash(key)
+    lm.mutexes[slotIdx].Unlock()
 }
 
