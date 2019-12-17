@@ -1,4 +1,4 @@
-package ts_promote
+package tcc
 
 import "fmt"
 

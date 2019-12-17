@@ -1,8 +1,8 @@
-package ts_promote
+package tcc
 
 import (
     "fmt"
-    "ts_promote/data_struct"
+    "tcc/data_struct"
 )
 
 type DB struct {

@@ -1,6 +1,6 @@
-package ts_promote
+package tcc
 
-import "ts_promote/sync2"
+import "tcc/sync2"
 
 type TimeServer struct {
     c sync2.AtomicInt64

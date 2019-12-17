@@ -1,11 +1,11 @@
-package ts_promote
+package tcc
 
 import (
     "fmt"
     "github.com/golang/glog"
     "sync"
-    "ts_promote/assert"
-    "ts_promote/sync2"
+    "tcc/assert"
+    "tcc/sync2"
 )
 
 type OpType int
@@ -16,6 +16,9 @@ const (
     IncrMinus
     WriteDirect
 )
+
+// Soiyez prudent
+const enableFirstOpTimestampPromote = true
 
 func (ot OpType) IsIncr() bool {
     return int(ot) < int(WriteDirect)
@@ -81,6 +84,7 @@ type Txn struct {
     status sync2.AtomicInt32
 
     ReadVersion int64
+    firstOpMet bool
 
     mutex sync.Mutex
     cond  sync.Cond
@@ -98,6 +102,7 @@ func NewTx(ops []Op) *Txn {
         status: sync2.NewAtomicInt32(int32(TxStatusInitialized)),
 
         ReadVersion: 0,
+        firstOpMet:  false,
     }
     txn.cond = sync.Cond{
         L: &txn.mutex,
@@ -228,6 +233,16 @@ func (tx *Txn) GetCommitData() map[string]float64 {
 
 func (tx *Txn) ClearCommitData() {
     tx.commitData = make(map[string]float64)
+}
+
+func (tx *Txn) CheckFirstOp(ts *TimeServer) {
+    if !enableFirstOpTimestampPromote {
+        return
+    }
+    if !tx.firstOpMet {
+        tx.firstOpMet = true
+        tx.timestamp.Set(ts.FetchTimestamp())
+    }
 }
 
 func Later(a *Txn, b *Txn) *Txn {

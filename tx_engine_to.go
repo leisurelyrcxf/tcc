@@ -1,12 +1,12 @@
-package ts_promote
+package tcc
 
 import (
     "fmt"
     "github.com/golang/glog"
     "sync"
     "time"
-    "ts_promote/assert"
-    "ts_promote/data_struct"
+    "tcc/assert"
+    "tcc/data_struct"
 )
 
 var txnErrConflict = NewTxnError(fmt.Errorf("txn conflict"), true)
@@ -249,7 +249,7 @@ func (te *TxEngineTO) executeOp(db *DB, txn *Txn, op Op) error {
         return te.executeIncrOp(db, txn, op)
     }
     if op.typ == WriteDirect {
-        return te.set(txn, op.key, op.operatorNum)
+        return te.set(txn, op.key, op.operatorNum, db.ts)
     }
     panic("not implemented")
 }
@@ -269,14 +269,15 @@ func (te *TxEngineTO) executeIncrOp(db *DB, txn *Txn, op Op) error {
     default:
         panic("unimplemented")
     }
-    return te.set(txn, op.key, val)
+    return te.set(txn, op.key, val, db.ts)
 }
 
 func (te *TxEngineTO) get(db *DB, txn *Txn, key string) (val float64, err error) {
     te.lm.RLock(key)
     defer te.lm.RUnlock(key)
-
     glog.Infof("txn(%s) want to get key '%s'", txn.String(), key)
+
+    txn.CheckFirstOp(db.ts)
     // ts won't change because only this thread can modify it's value.
     ts := txn.GetTimestamp()
 
@@ -362,11 +363,12 @@ func (te *TxEngineTO) get(db *DB, txn *Txn, key string) (val float64, err error)
     return
 }
 
-func (te *TxEngineTO) set(txn *Txn, key string, val float64) (err error) {
+func (te *TxEngineTO) set(txn *Txn, key string, val float64, timeServ *TimeServer) (err error) {
     te.lm.Lock(key)
     defer te.lm.Unlock(key)
     glog.Infof("txn(%s) want to set key '%s' to value %f", txn.String(), key, val)
 
+    txn.CheckFirstOp(timeServ)
     ts := txn.GetTimestamp()
 
     // Write-read conflict
