@@ -229,7 +229,7 @@ func executeOneRound(db *DB, txns []*Txn, initDBFunc func(*DB)) (time.Duration, 
     start := time.Now()
     newTxns := make([]*Txn, 0, len(txns))
     var newTxnsMutex sync.Mutex
-    te := NewTxEngineTO(db,4, db.lm)
+    te := NewTxEngineTO(db,4, db.lm, true)
     te.AddPostCommitListener(func(txn *Txn) {
         newTxnsMutex.Lock()
         newTxns = append(newTxns, txn)

@@ -14,18 +14,23 @@ var txnErrConflict = NewTxnError(fmt.Errorf("txn conflict"), true)
 var txnErrStaleWrite = NewTxnError(fmt.Errorf("stale write"), true)
 
 type TxEngineExecutorTO struct {
-    te *TxEngineTO
-    db *DB
+    te          *TxEngineTO
+    db          *DB
+    enableCache bool
 }
 
-func NewTxEngineExecutorTO(te *TxEngineTO, db* DB) *TxEngineExecutorTO {
+func NewTxEngineExecutorTO(te *TxEngineTO, db* DB, enableCache bool) *TxEngineExecutorTO {
     return &TxEngineExecutorTO{
-        te:  te,
-        db:  db,
+        te:           te,
+        db:           db,
+        enableCache:  enableCache,
     }
 }
 
 func (e *TxEngineExecutorTO) Get(key string, ctx expr.Context) (float64, error) {
+    if !e.enableCache {
+        return e.te.get(e.db, ctx.(*Txn), key)
+    }
     tx := ctx.(*Txn)
     if val, ok := tx.ctx[key]; ok {
         glog.V(10).Infof("Get cached value %f for key '%s'", val, key)
@@ -58,7 +63,7 @@ type TxEngineTO struct {
     e                    *TxEngineExecutorTO
 }
 
-func NewTxEngineTO(db *DB, threadNum int, lm *LockManager) *TxEngineTO {
+func NewTxEngineTO(db *DB, threadNum int, lm *LockManager, enableCache bool) *TxEngineTO {
     te := &TxEngineTO{
         threadNum:      threadNum,
         mw:             data_struct.NewConcurrentMap(1024),
@@ -67,7 +72,7 @@ func NewTxEngineTO(db *DB, threadNum int, lm *LockManager) *TxEngineTO {
         txns:           make(chan *Txn, threadNum),
         errs:           make(chan *TxnError, threadNum * 100),
     }
-    te.e = NewTxEngineExecutorTO(te, db)
+    te.e = NewTxEngineExecutorTO(te, db, enableCache)
     return te
 }
 

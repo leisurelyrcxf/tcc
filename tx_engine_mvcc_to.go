@@ -6,27 +6,68 @@ import (
     "sync"
     "tcc/assert"
     "tcc/data_struct"
+    "tcc/expr"
 )
+
+type TxEngineExecutorMVCCTO struct {
+    te          *TxEngineMVCCTO
+    db          *DB
+    enableCache bool
+}
+
+func NewTxEngineExecutorMVCCTO(te *TxEngineMVCCTO, db* DB, enableCache bool) *TxEngineExecutorMVCCTO {
+    return &TxEngineExecutorMVCCTO{
+        te:           te,
+        db:           db,
+        enableCache:  enableCache,
+    }
+}
+
+func (e *TxEngineExecutorMVCCTO) Get(key string, ctx expr.Context) (float64, error) {
+    if !e.enableCache {
+        return e.te.get(e.db, ctx.(*Txn), key)
+    }
+    tx := ctx.(*Txn)
+    if val, ok := tx.ctx[key]; ok {
+        glog.V(10).Infof("Get cached value %f for key '%s'", val, key)
+        return val, nil
+    }
+    val, err := e.te.get(e.db, tx, key)
+    if err == nil {
+        tx.ctx[key] = val
+        glog.V(10).Infof("Get value %f for key '%s'", val, key)
+    }
+    return val, err
+}
+
+func (e *TxEngineExecutorMVCCTO) Set(key string, val float64, ctx expr.Context) error {
+    tx := ctx.(*Txn)
+    delete(tx.ctx, key)
+    err := e.te.set(e.db, tx, key, val)
+    glog.V(10).Infof("Set value %f for key '%s'", val, key)
+    return err
+}
 
 type TxEngineMVCCTO struct {
     threadNum           int
-    mw                  data_struct.ConcurrentMap
     mr                  data_struct.ConcurrentMap
     lm                  *LockManager
     txns                chan *Txn
     errs                chan *TxnError
     postCommitListeners []func(*Txn)
+    e                   *TxEngineExecutorMVCCTO
 }
 
-func NewTxEngineMVCCTO(threadNum int, lm *LockManager) *TxEngineMVCCTO {
-    return &TxEngineMVCCTO{
+func NewTxEngineMVCCTO(db *DB, threadNum int, lm *LockManager, enableCache bool) *TxEngineMVCCTO {
+    te := &TxEngineMVCCTO{
         threadNum:      threadNum,
-        mw:             data_struct.NewConcurrentMap(1024),
         mr:             data_struct.NewConcurrentMap(1024),
         lm:             lm,
         txns:           make(chan *Txn, threadNum),
         errs:           make(chan *TxnError, threadNum * 100),
     }
+    te.e = NewTxEngineExecutorMVCCTO(te, db, enableCache)
+    return te
 }
 
 func compactKey(key string, version int64) string {
@@ -51,10 +92,6 @@ func getMaxTxForKeyAndVersion(key string, version int64, m *data_struct.Concurre
 
 func (te *TxEngineMVCCTO) getMaxReadTxForKeyAndVersion(key string, version int64) *Txn {
     return getMaxTxForKeyAndVersion(key, version, &te.mr)
-}
-
-func (te *TxEngineMVCCTO) getMaxWriteTxForKeyAndVersion(key string, version int64) *Txn {
-    return getMaxTxForKeyAndVersion(key, version, &te.mw)
 }
 
 func putTxForKeyAndVersion(key string, version int64, tx *Txn, m *data_struct.ConcurrentMap, lm *LockManager) {
@@ -87,10 +124,6 @@ func putTxForKeyAndVersion(key string, version int64, tx *Txn, m *data_struct.Co
 
 func (te *TxEngineMVCCTO) putReadTxForKeyAndVersion(key string, version int64, tx *Txn, lm *LockManager) {
     putTxForKeyAndVersion(key, version, tx, &te.mr, lm)
-}
-
-func (te *TxEngineMVCCTO) putWriteTxForKeyAndVersion(key string, version int64, tx *Txn) {
-    putTxForKeyAndVersion(key, version, tx, &te.mw, nil)
 }
 
 func (te *TxEngineMVCCTO) AddPostCommitListener(cb func(*Txn)) {
@@ -203,6 +236,10 @@ func (te *TxEngineMVCCTO) executeOp(db *DB, txn *Txn, op Op) error {
     if op.typ == WriteDirect {
         // Needs to find out read versions still.
         return te.set(db, txn, op.key, op.operatorNum)
+    }
+    if op.typ == Procedure {
+        _, err := op.expr.Eval(te.e, txn)
+        return err
     }
     panic("not implemented")
 }
