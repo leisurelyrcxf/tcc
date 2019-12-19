@@ -54,8 +54,14 @@ func TestTxEngineMVCCTO(t *testing.T) {
         db.values.ForEachStrict(func(_ string, vv interface{}) {
             vv.(DBVersionedValues).Clear()
         })
-        db.SetUnsafe("a", 0, 0, nil)
-        db.SetUnsafe("b", 1, 0, nil)
+        i := float64(0)
+        db.SetUnsafe("a", i, 0, nil); i++
+        db.SetUnsafe("b", i, 0, nil); i++
+        db.SetUnsafe("c", i, 0, nil); i++
+        db.SetUnsafe("d", i, 0, nil); i++
+        db.SetUnsafe("e", i, 0, nil); i++
+        db.SetUnsafe("f", i, 0, nil); i++
+        db.SetUnsafe("g", i, 0, nil); i++
         db.ts.c.Set(0)
     }
 
