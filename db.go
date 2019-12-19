@@ -63,7 +63,7 @@ func (db *DB) SetSafe(key string, val float64, writtenTxn *Txn) bool {
         return !exist || version >= prev.(DBValue).Version
     })
     if !setted {
-        glog.Warningf("ignored txn(%s) committed value %f for key '%s'," +
+        glog.V(5).Infof("ignored txn(%s) committed value %f for key '%s'," +
             " version_num_of_txn(%d) < committed_version(%d)",
             writtenTxn.String(), val, key, version, prevVal.(DBValue).Version)
     }

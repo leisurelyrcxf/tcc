@@ -4,6 +4,7 @@ import (
     "fmt"
     "github.com/golang/glog"
     "testing"
+    "time"
 )
 
 func Exec() (err error) {
@@ -63,13 +64,14 @@ func TxTest(t *testing.T, db *DB, txns []*Txn, initDBFunc func(*DB),
         return false
     }
 
+    start := time.Now()
     for i := 0; i < round; i++ {
         initDBFunc(db)
         for _, txn := range txns {
             txn.Reset()
         }
 
-        glog.Infof("\nRound: %d\n", i)
+        glog.V(10).Infof("\nRound: %d\n", i)
         if err := executeTxns(db, txns, txnEngineConstructor); err != nil {
             t.Errorf(err.Error())
             return
@@ -78,7 +80,11 @@ func TxTest(t *testing.T, db *DB, txns []*Txn, initDBFunc func(*DB),
             t.Errorf("result %s not conflict serializable", SerializeMap(db.Snapshot()))
             return
         }
+        if i % 100 == 0 {
+            fmt.Printf("%d rounds finished\n", i)
+        }
     }
+    fmt.Printf("\nCost %f seconds for %d rounds\n", float64(time.Since(start))/float64(time.Second), round)
 }
 
 func executeTxns(db* DB, txns []*Txn, txnEngineConstructor func() TxEngine) error {

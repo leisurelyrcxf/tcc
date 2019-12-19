@@ -23,23 +23,24 @@ func TestNewTxEngineC2PL(t *testing.T) {
             typ: IncrAdd,
             operatorNum: 1,
         }},
-    ), NewTx(
-        []Op {{
-            key: "b",
-            typ: IncrMultiply,
-            operatorNum: 20,
-        }, {
-            key: "a",
-            typ: IncrAdd,
-            operatorNum: 10,
-        }},
-    ), NewTx(
-        []Op {{
-            key:         "a",
-            typ:         WriteDirect,
-            operatorNum: 100,
-        }},
     ),
+    //NewTx(
+    //    []Op {{
+    //        key: "b",
+    //        typ: IncrMultiply,
+    //        operatorNum: 20,
+    //    }, {
+    //        key: "a",
+    //        typ: IncrAdd,
+    //        operatorNum: 10,
+    //    }},
+    //), NewTx(
+    //    []Op {{
+    //        key:         "a",
+    //        typ:         WriteDirect,
+    //        operatorNum: 100,
+    //    }},
+    //),
     }
 
     initDBFunc := func (db *DB) {

@@ -340,7 +340,7 @@ func (te *TxEngineTO) set(txn *Txn, key string, val float64, timeServ *TimeServe
     for {
         maxWriteTxn := te.getMaxWriteTxForKey(key)
         if ts < maxWriteTxn.GetTimestamp() {
-            for i := 0; i < 10; i++ {
+            for i := 0; i < 8; i++ {
                 status := maxWriteTxn.GetStatus()
                 if status.Done() {
                     if status.Succeeded() {
