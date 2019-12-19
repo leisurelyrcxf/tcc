@@ -68,6 +68,7 @@ func TxTest(t *testing.T, db *DB, txns []*Txn, initDBFunc func(*DB),
     }
 
     start := time.Now()
+    var totalTime time.Duration
     for i := 0; i < round; i++ {
         initDBFunc(db)
         for _, txn := range txns {
@@ -79,6 +80,9 @@ func TxTest(t *testing.T, db *DB, txns []*Txn, initDBFunc func(*DB),
             t.Errorf(err.Error())
             return
         }
+
+        totalTime += time.Since(start)
+
         if !checkResult(db) {
             t.Errorf("result %s not conflict serializable", SerializeMap(db.Snapshot()))
             return
@@ -86,8 +90,10 @@ func TxTest(t *testing.T, db *DB, txns []*Txn, initDBFunc func(*DB),
         if i % 100 == 0 {
             fmt.Printf("%d rounds finished\n", i)
         }
+
+        start = time.Now()
     }
-    fmt.Printf("\nCost %f seconds for %d rounds\n", float64(time.Since(start))/float64(time.Second), round)
+    fmt.Printf("\nCost %f seconds for %d rounds\n", float64(totalTime)/float64(time.Second), round)
 }
 
 func executeTxns(db* DB, txns []*Txn, txnEngineConstructor func() TxEngine) error {

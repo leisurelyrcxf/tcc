@@ -57,11 +57,13 @@ func TestTxEngineTimestampOrdering(t *testing.T) {
         db.ts.c.Set(0)
     }
 
-    start := time.Now()
+    var totalTime time.Duration
     round := 10000
     for i := 0; i < round; i++ {
         glog.V(10).Infof("\nRound: %d\n", i)
-        err := executeOneRound(db, txns, initDBFunc)
+        duration, err := executeOneRound(db, txns, initDBFunc)
+        totalTime+= duration
+
         if err != nil {
             t.Errorf(err.Error())
             return
@@ -70,15 +72,16 @@ func TestTxEngineTimestampOrdering(t *testing.T) {
             fmt.Printf("%d rounds finished\n", i)
         }
     }
-    fmt.Printf("\nCost %f seconds for %d rounds\n", float64(time.Since(start))/float64(time.Second), round)
+    fmt.Printf("\nCost %f seconds for %d rounds\n", float64(totalTime)/float64(time.Second), round)
 }
 
-func executeOneRound(db *DB, txns []*Txn, initDBFunc func(*DB)) error {
+func executeOneRound(db *DB, txns []*Txn, initDBFunc func(*DB)) (time.Duration, error) {
     initDBFunc(db)
     for _, txn := range txns {
         txn.ResetForTestOnly()
     }
 
+    start := time.Now()
     newTxns := make([]*Txn, 0, len(txns))
     var newTxnsMutex sync.Mutex
     te := NewTxEngineTO(4, db.lm)
@@ -88,21 +91,22 @@ func executeOneRound(db *DB, txns []*Txn, initDBFunc func(*DB)) error {
         newTxnsMutex.Unlock()
     })
     if err := te.ExecuteTxns(db, txns); err != nil {
-        return err
+        return 0, err
     }
+    duration := time.Since(start)
     if len(newTxns) != len(txns) {
-        return fmt.Errorf("not the same, expect %d, but met %d", len(txns), len(newTxns))
+        return 0, fmt.Errorf("not the same, expect %d, but met %d", len(txns), len(newTxns))
     }
     toResult := db.Snapshot()
 
     if err := generateDatum(db, newTxns, initDBFunc); err != nil {
-        return err
+        return 0, err
     }
     datum := db.Snapshot()
     if !areEqualMaps(toResult, datum) {
-        return fmt.Errorf("expect '%s', but met '%s'", SerializeMap(datum), SerializeMap(toResult))
+        return 0, fmt.Errorf("expect '%s', but met '%s'", SerializeMap(datum), SerializeMap(toResult))
     }
-    return nil
+    return duration, nil
 }
 
 func generateDatum(db *DB, txns []*Txn, initDBFunc func(*DB)) error {
