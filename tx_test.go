@@ -4,6 +4,7 @@ import (
     "fmt"
     "github.com/golang/glog"
     "testing"
+    "time"
 )
 
 func Exec() (err error) {
@@ -63,6 +64,7 @@ func TxTest(t *testing.T, db *DB, txns []*Txn, initDBFunc func(*DB),
         return false
     }
 
+    start := time.Now()
     for i := 0; i < round; i++ {
         initDBFunc(db)
         for _, txn := range txns {
@@ -79,6 +81,7 @@ func TxTest(t *testing.T, db *DB, txns []*Txn, initDBFunc func(*DB),
             return
         }
     }
+    fmt.Printf("\nCost %f seconds for %d rounds\n", float64(time.Since(start))/float64(time.Second), round)
 }
 
 func executeTxns(db* DB, txns []*Txn, txnEngineConstructor func() TxEngine) error {
