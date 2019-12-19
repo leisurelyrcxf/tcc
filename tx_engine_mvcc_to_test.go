@@ -43,8 +43,8 @@ func TestTxEngineMVCCTO(t *testing.T) {
     ),
     NewTx(
         []Op {{
-            key:         "a",
-            typ:         WriteDirect,
+            key: "a",
+            typ: WriteDirect,
             operatorNum: 100,
         }},
     ),
