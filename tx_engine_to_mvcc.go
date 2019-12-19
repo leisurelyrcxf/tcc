@@ -339,23 +339,12 @@ func (te *TxEngineTOMVCC) get(db *DB, txn *Txn, key string) (val float64, err er
         return
     }
 
-    if txn.ReadVersion == 0 {
-        txn.ReadVersion = db.FindMaxVersion(func(version int64) bool {
-            return version <= ts
-        })
-    }
-    if txn.ReadVersion < vv.Version {
-        // Read future versions, can't do anything
-        err = txnErrConflict
-        return
-    }
-    writtenTxn := vv.WrittenTxn
-    if writtenTxn != nil && !writtenTxn.GetStatus().Done() {
-        // Shouldn't be possible since commit is aTOMVCCmic.
-        assert.Must(false)
-        // Committing, wait till valid.
-        //writtenTxn.WaitUntilDone(txn)
-    }
+    // No need to check cause if we read that version, it is not possible to rollback.
+    //writtenTxn := vv.WrittenTxn
+    //if writtenTxn != nil && !writtenTxn.GetStatus().Done() {
+    //    // Committing, wait till valid.
+    //    //writtenTxn.WaitUntilDone(txn)
+    //}
     te.putReadTxForKey(key, txn, db.lm)
     val = vv.Value
     glog.Infof("txn(%s) got value %f for key '%s'", txn.String(), val, key)
