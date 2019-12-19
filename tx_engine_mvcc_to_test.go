@@ -3,14 +3,13 @@ package tcc
 import (
     "fmt"
     "github.com/golang/glog"
-    "sort"
     "sync"
     "testing"
     "time"
 )
 
-func TestTxEngineTimestampOrdering(t *testing.T) {
-    db := NewDB()
+func TestTxEngineMVCCTO(t *testing.T) {
+    db := NewDBWithMVCCEnabled()
     txns := []*Txn{NewTx(
         []Op {{
             key: "a",
@@ -33,21 +32,21 @@ func TestTxEngineTimestampOrdering(t *testing.T) {
         }},
     ),
     //NewTx(
-    //      []Op {{
-    //          key: "b",
-    //          typ: IncrMultiply,
-    //          operatorNum: 20,
-    //      }, {
-    //          key: "a",
-    //          typ: IncrAdd,
-    //          operatorNum: 10,
-    //      }},
+    //       []Op {{
+    //           key: "b",
+    //           typ: IncrMultiply,
+    //           operatorNum: 20,
+    //       }, {
+    //           key: "a",
+    //           typ: IncrAdd,
+    //           operatorNum: 10,
+    //       }},
     //), NewTx(
-    //  []Op {{
-    //      key:         "a",
-    //      typ:         WriteDirect,
-    //      operatorNum: 100,
-    //  }},
+    //   []Op {{
+    //       key:         "a",
+    //       typ:         WriteDirect,
+    //       operatorNum: 100,
+    //   }},
     //),
     }
 
@@ -61,7 +60,7 @@ func TestTxEngineTimestampOrdering(t *testing.T) {
     round := 10000
     for i := 0; i < round; i++ {
         glog.V(10).Infof("\nRound: %d\n", i)
-        duration, err := executeOneRound(db, txns, initDBFunc)
+        duration, err := executeOneRoundMVCCTO(db, txns, initDBFunc)
         totalTime+= duration
 
         if err != nil {
@@ -75,7 +74,7 @@ func TestTxEngineTimestampOrdering(t *testing.T) {
     fmt.Printf("\nCost %f seconds for %d rounds\n", float64(totalTime)/float64(time.Second), round)
 }
 
-func executeOneRound(db *DB, txns []*Txn, initDBFunc func(*DB)) (time.Duration, error) {
+func executeOneRoundMVCCTO(db *DB, txns []*Txn, initDBFunc func(*DB)) (time.Duration, error) {
     initDBFunc(db)
     for _, txn := range txns {
         txn.ResetForTestOnly()
@@ -84,7 +83,7 @@ func executeOneRound(db *DB, txns []*Txn, initDBFunc func(*DB)) (time.Duration, 
     start := time.Now()
     newTxns := make([]*Txn, 0, len(txns))
     var newTxnsMutex sync.Mutex
-    te := NewTxEngineTO(4, db.lm)
+    te := NewTxEngineMVCCTO(4, db.lm)
     te.AddPostCommitListener(func(txn *Txn) {
         newTxnsMutex.Lock()
         newTxns = append(newTxns, txn)
@@ -107,20 +106,6 @@ func executeOneRound(db *DB, txns []*Txn, initDBFunc func(*DB)) (time.Duration, 
         return 0, fmt.Errorf("expect '%s', but met '%s'", SerializeMap(datum), SerializeMap(toResult))
     }
     return duration, nil
-}
-
-func generateDatum(db *DB, txns []*Txn, initDBFunc func(*DB)) error {
-    sort.Sort(TxnSliceSortByTimestamp(txns))
-    defer sort.Sort(TxnSliceSortByTxID(txns))
-    for _, txn := range txns {
-        txn.ResetForTestOnly()
-    }
-    initDBFunc(db)
-    var ten TxEngineNaive
-    if err := ten.ExecuteTxns(db, txns); err != nil {
-        return fmt.Errorf("execute failed for oneOrderTxns, detail: '%s'", err.Error())
-    }
-    return nil
 }
 
 

@@ -93,7 +93,7 @@ func NewDB() *DB {
     return db
 }
 
-func NewDBWithMVCC() *DB {
+func NewDBWithMVCCEnabled() *DB {
     db := NewDB()
     db.mvccEnabled = true
     return db
@@ -168,7 +168,11 @@ func (db *DB) SetSafe(key string, val float64, writtenTxn *Txn) bool {
 }
 
 func (db *DB) SetUnsafe(key string, val float64, version int64, writtenTxn *Txn) {
-    db.values.Set(key, NewDBVersionedValue(val, writtenTxn, version))
+    if !db.mvccEnabled {
+        db.values.Set(key, NewDBVersionedValue(val, writtenTxn, version))
+        return
+    }
+    db.SetPartialLocked(key, val, emptyTx, false)
 }
 
 func (db *DB) Snapshot() map[string]float64 {

@@ -10,12 +10,13 @@ import (
 )
 
 type TxEngineMVCCTO struct {
-    threadNum      int
-    mw             data_struct.ConcurrentMap
-    mr             data_struct.ConcurrentMap
-    lm             *LockManager
-    txns           chan *Txn
-    errs           chan *TxnError
+    threadNum           int
+    mw                  data_struct.ConcurrentMap
+    mr                  data_struct.ConcurrentMap
+    lm                  *LockManager
+    txns                chan *Txn
+    errs                chan *TxnError
+    postCommitListeners []func(*Txn)
 }
 
 func NewTxEngineMVCCTO(threadNum int, lm *LockManager) *TxEngineMVCCTO {
@@ -116,6 +117,10 @@ func (te *TxEngineMVCCTO) removeWriteTxForKey(key string, version int64, tx *Txn
     removeTxForKey2(key, version, tx, &te.mw)
 }
 
+func (te *TxEngineMVCCTO) AddPostCommitListener(cb func(*Txn)) {
+    te.postCommitListeners = append(te.postCommitListeners, cb)
+}
+
 func (te *TxEngineMVCCTO) ExecuteTxns(db *DB, txns []*Txn) error {
     go func() {
         for _, txn := range txns {
@@ -129,7 +134,7 @@ func (te *TxEngineMVCCTO) ExecuteTxns(db *DB, txns []*Txn) error {
         wg.Add(1)
         go func() {
             defer wg.Done()
-            if err := te.executeTxnsSingleThread(db); err != nil {
+            if err := te.executeTxnThreadFunc(db); err != nil {
                 te.errs <-err.(*TxnError)
             }
         }()
@@ -146,7 +151,7 @@ func (te *TxEngineMVCCTO) ExecuteTxns(db *DB, txns []*Txn) error {
     }
 }
 
-func (te *TxEngineMVCCTO) executeTxnsSingleThread(db *DB) error {
+func (te *TxEngineMVCCTO) executeTxnThreadFunc(db *DB) error {
     for txn := range te.txns {
         if err := te.executeSingleTx(db, txn); err != nil {
             return err
@@ -159,6 +164,7 @@ func (te *TxEngineMVCCTO) executeSingleTx(db *DB, tx *Txn) error {
     for {
         err := te._executeSingleTx(db, tx)
         if err != nil && err.(*TxnError).IsRetryable() {
+            tx = tx.Clone()
             continue
         }
         return err
@@ -171,7 +177,9 @@ func (te *TxEngineMVCCTO) _executeSingleTx(db *DB, txn *Txn) (err error) {
 
     defer func() {
         if err != nil {
-            te.rollback(txn, err)
+            te.rollback(db, txn, err)
+        } else {
+            te.commit(db, txn)
         }
     }()
 
@@ -180,8 +188,6 @@ func (te *TxEngineMVCCTO) _executeSingleTx(db *DB, txn *Txn) (err error) {
             return
         }
     }
-
-    te.commit(db, txn)
     return
 }
 
@@ -190,9 +196,13 @@ func (te *TxEngineMVCCTO) commit(db *DB, tx *Txn) {
         _ = db.SetSafe(key, val, tx)
     }
     tx.Done(TxStatusSucceeded)
+
+    for _, l := range te.postCommitListeners {
+        l(tx)
+    }
 }
 
-func (te *TxEngineMVCCTO) rollback(tx *Txn, reason error) {
+func (te *TxEngineMVCCTO) rollback(db *DB, tx *Txn, reason error) {
     var retryLaterStr string
     if reason.(*TxnError).IsRetryable() {
         retryLaterStr = ", retry later"
@@ -255,8 +265,9 @@ func (te *TxEngineMVCCTO) get(db *DB, txn *Txn, key string) (float64, error) {
         if err != nil {
             return 0, NewTxnError(err,false)
         }
-        stats := dbVal.WrittenTxn.GetStatus()
-        if stats.Succeeded() {
+        dbValWrittenTxn := dbVal.WrittenTxn
+        stats := dbValWrittenTxn.GetStatus()
+        if dbValWrittenTxn == emptyTx || stats.Succeeded() {
             // TODO remove this
             assert.Must(dbVal.WrittenTxn.GetTimestamp() == dbVal.Version)
             te.putReadTxForKey(key, dbVal.Version, txn, db.lm)
@@ -268,7 +279,7 @@ func (te *TxEngineMVCCTO) get(db *DB, txn *Txn, key string) (float64, error) {
             continue
         }
         db.lm.RUnlock(key)
-        dbVal.WrittenTxn.WaitUntilDone(txn.String())
+        dbValWrittenTxn.WaitUntilDone(txn.String())
         db.lm.RLock(key)
     }
 }

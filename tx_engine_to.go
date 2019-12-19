@@ -34,22 +34,17 @@ func NewTxEngineTO(threadNum int, lm *LockManager) *TxEngineTO {
 }
 
 func getMaxTxForKey(key string, m *data_struct.ConcurrentMap) *Txn {
-    if obj, ok := m.Get(key); !ok {
+    if tmObj, ok := m.Get(key); !ok {
         return emptyTx
     } else {
-        tm := obj.(*data_struct.ConcurrentTreeMap)
-
-        obj, _ = tm.Max()
-        if obj == nil {
+        tm := tmObj.(*data_struct.ConcurrentTreeMap)
+        maxKey, _ := tm.MaxIf(func(key interface{}) bool {
+            return !key.(*Txn).GetStatus().HasError()
+        })
+        if maxKey == nil {
             return emptyTx
         }
-        txn := obj.(*Txn)
-        status := txn.GetStatus()
-        if status.HasError() {
-            removeTxForKey(key, txn, m)
-            return getMaxTxForKey(key, m)
-        }
-        return txn
+        return maxKey.(*Txn)
     }
 }
 
@@ -203,10 +198,10 @@ func (te *TxEngineTO) rollback(tx *Txn, reason error) {
         retryLaterStr = ", retry later"
     }
     glog.V(10).Infof("rollback txn(%s) due to error '%s'%s", tx.String(), reason.Error(), retryLaterStr)
-    for _, key := range tx.CollectKeys() {
-        te.removeReadTxForKey(key, tx)
-        te.removeWriteTxForKey(key, tx)
-    }
+    //for _, key := range tx.CollectKeys() {
+    //    te.removeReadTxForKey(key, tx)
+    //    te.removeWriteTxForKey(key, tx)
+    //}
     tx.ClearCommitData()
     if reason == txnErrStaleWrite {
         tx.Done(TxStatusFailedRetryable)
