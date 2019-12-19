@@ -240,15 +240,20 @@ func (te *TxEngineMVCCTO) get(db *DB, txn *Txn, key string, waitIfDirty bool) (f
             return 0, NewTxnError(err,false)
         }
 
+        dbValWrittenTxn := dbVal.WrittenTxn
+        assert.Must(dbValWrittenTxn.GetTimestamp() == dbVal.Version)
+        stats := dbValWrittenTxn.GetStatus()
+
+        if stats.HasError() {
+            continue
+        }
+
         if !waitIfDirty {
+            te.putReadTxForKeyAndVersion(key, dbVal.Version, txn, db.lm)
             txn.AddReadVersion(key, dbVal.Version)
             glog.V(10).Infof("txn(%s) got value(%f, %d) for key '%s'", txn.String(), math.NaN(), dbVal.Version, key)
             return math.NaN(), nil
         }
-
-        dbValWrittenTxn := dbVal.WrittenTxn
-        assert.Must(dbValWrittenTxn.GetTimestamp() == dbVal.Version)
-        stats := dbValWrittenTxn.GetStatus()
 
         if dbValWrittenTxn == emptyTx || stats.Succeeded() {
             te.putReadTxForKeyAndVersion(key, dbVal.Version, txn, db.lm)
@@ -275,7 +280,7 @@ func (te *TxEngineMVCCTO) set(db *DB, txn *Txn, key string, val float64) error {
 
     readVersion, ok := txn.readVersions[key]
     if !ok {
-        _, err := te.get(db, txn, key, false)
+        _, err := te.get(db, txn, key, true)
         if err != nil {
             return err
         }
