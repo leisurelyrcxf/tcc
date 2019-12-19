@@ -87,8 +87,8 @@ func putTxForKey(key string, tx *Txn, m *data_struct.ConcurrentMap, lm *LockMana
     tm.Put(tx, nil)
 }
 
-func (te *TxEngineTO) putReadTxForKey(key string, tx *Txn, lm *LockManager) {
-    putTxForKey(key, tx, &te.mr, lm)
+func (te *TxEngineTO) putReadTxForKey(key string, tx *Txn) {
+    putTxForKey(key, tx, &te.mr, nil)
 }
 
 func (te *TxEngineTO) putWriteTxForKey(key string, tx *Txn) {
@@ -237,8 +237,8 @@ func (te *TxEngineTO) executeIncrOp(db *DB, txn *Txn, op Op) error {
 }
 
 func (te *TxEngineTO) get(db *DB, txn *Txn, key string) (val float64, err error) {
-    te.lm.RLock(key)
-    defer te.lm.RUnlock(key)
+    te.lm.Lock(key)
+    defer te.lm.Unlock(key)
     glog.V(10).Infof("txn(%s) want to get key '%s'", txn.String(), key)
 
     txn.CheckFirstOp(db.ts)
@@ -295,9 +295,9 @@ func (te *TxEngineTO) get(db *DB, txn *Txn, key string) (val float64, err error)
             maxWriteTxn.GetTimestamp() != maxWriteTxnTs {
            continue
         }
-        db.lm.RUnlock(key)
-        maxWriteTxn.WaitUntilDoneOrRestarted(round, txn)
-        db.lm.RLock(key)
+        db.lm.Unlock(key)
+        maxWriteTxn.WaitUntilDoneOrRestarted(txn, round)
+        db.lm.Lock(key)
     }
 
     vv, dbErr := db.GetDBValue(key)
@@ -316,7 +316,7 @@ func (te *TxEngineTO) get(db *DB, txn *Txn, key string) (val float64, err error)
     //if writtenTxn != nil && !writtenTxn.GetStatus().Done() {
     //    writtenTxn.WaitUntilDone(txn)
     //}
-    te.putReadTxForKey(key, txn, db.lm)
+    te.putReadTxForKey(key, txn)
     val = vv.Value
     glog.V(10).Infof("txn(%s) got value %f for key '%s'", txn.String(), val, key)
     return
