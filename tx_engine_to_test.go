@@ -5,6 +5,7 @@ import (
     "github.com/golang/glog"
     "sort"
     "testing"
+    "time"
 )
 
 func TestTxEngineTimestampOrdering(t *testing.T) {
@@ -29,23 +30,24 @@ func TestTxEngineTimestampOrdering(t *testing.T) {
             typ: IncrAdd,
             operatorNum: 1,
         }},
-    ), NewTx(
-            []Op {{
-                key: "b",
-                typ: IncrMultiply,
-                operatorNum: 20,
-            }, {
-                key: "a",
-                typ: IncrAdd,
-                operatorNum: 10,
-            }},
-    ), NewTx(
-        []Op {{
-            key:         "a",
-            typ:         WriteDirect,
-            operatorNum: 100,
-        }},
     ),
+    //NewTx(
+    //        []Op {{
+    //            key: "b",
+    //            typ: IncrMultiply,
+    //            operatorNum: 20,
+    //        }, {
+    //            key: "a",
+    //            typ: IncrAdd,
+    //            operatorNum: 10,
+    //        }},
+    //), NewTx(
+    //    []Op {{
+    //        key:         "a",
+    //        typ:         WriteDirect,
+    //        operatorNum: 100,
+    //    }},
+    //),
     }
 
     initDBFunc := func (db *DB) {
@@ -56,7 +58,8 @@ func TestTxEngineTimestampOrdering(t *testing.T) {
         db.ts.c.Set(0)
     }
 
-    round := 100000
+    round := 10000
+    start := time.Now()
     for i := 0; i < round; i++ {
         glog.V(10).Infof("\nRound: %d\n", i)
         err := executeOneRound(db, txns, initDBFunc)
@@ -68,6 +71,7 @@ func TestTxEngineTimestampOrdering(t *testing.T) {
             fmt.Printf("%d rounds finished\n", i)
         }
     }
+    fmt.Printf("\nCost %f seconds for %d rounds\n", float64(time.Since(start))/float64(time.Second), round)
 }
 
 func executeOneRound(db *DB, txns []*Txn, initDBFunc func(*DB)) error {
