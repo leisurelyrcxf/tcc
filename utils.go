@@ -2,7 +2,10 @@ package tcc
 
 import (
     "fmt"
+    "reflect"
     "strconv"
+    "strings"
+    "tcc/assert"
 )
 
 func Permutate(txns []*Txn) chan[]*Txn {
@@ -92,4 +95,14 @@ func areEqualMaps(m1 map[string]float64, m2 map[string]float64) bool {
         }
     }
     return true
+}
+
+func Array2String(objs interface{}, strMapper func(interface{})string) string {
+    assert.Must(reflect.TypeOf(objs).Kind() == reflect.Array || reflect.TypeOf(objs).Kind() == reflect.Slice)
+    sa := reflect.ValueOf(objs)
+    strs := make([]string, sa.Len())
+    for i := 0; i < sa.Len(); i++ {
+        strs[i] = strMapper(sa.Index(i).Interface())
+    }
+    return strings.Join(strs, ", ")
 }

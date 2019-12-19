@@ -87,6 +87,9 @@ type Txn struct {
 
     mutex        sync.Mutex
     cond         sync.Cond
+
+    next         *Txn
+    prev         *Txn
 }
 
 const TxIDNaN = -1
@@ -139,6 +142,8 @@ func (tx *Txn) Clone() *Txn {
     newTxn.cond = sync.Cond{
         L: &newTxn.mutex,
     }
+    tx.next = newTxn
+    newTxn.prev = tx
     return newTxn
 }
 
@@ -242,6 +247,9 @@ func (tx *Txn) ResetForTestOnly() {
 
     tx.firstOpMet = false
 
+    tx.next = nil
+    tx.prev = nil
+
     tx.mutex.Unlock()
 
     tx.cond.Broadcast()
@@ -272,6 +280,22 @@ func (tx *Txn) CheckFirstOp(ts *TimeServer) {
         tx.firstOpMet = true
         tx.timestamp.Set(ts.FetchTimestamp())
         tx.cond.Broadcast()
+    }
+}
+
+func (tx *Txn) Head() *Txn {
+    for cur, prev := tx, tx.prev; ; cur, prev = prev, prev.prev {
+        if prev == nil {
+            return cur
+        }
+    }
+}
+
+func (tx *Txn) Tail() *Txn {
+    for cur, next := tx, tx.next; ; cur, next = next, next.next {
+        if next == nil {
+            return cur
+        }
     }
 }
 

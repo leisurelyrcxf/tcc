@@ -3,7 +3,6 @@ package tcc
 import (
     "fmt"
     "github.com/golang/glog"
-    "sync"
     "testing"
     "time"
 )
@@ -32,22 +31,22 @@ func TestTxEngineMVCCTO(t *testing.T) {
         }},
     ),
     NewTx(
-          []Op {{
-              key: "b",
-              typ: IncrMultiply,
-              operatorNum: 20,
-          }, {
-              key: "a",
-              typ: IncrAdd,
-              operatorNum: 10,
-          }},
+        []Op {{
+            key: "b",
+            typ: IncrMultiply,
+            operatorNum: 20,
+        }, {
+            key: "a",
+            typ: IncrAdd,
+            operatorNum: 10,
+        }},
     ),
     NewTx(
-      []Op {{
-          key:         "a",
-          typ:         WriteDirect,
-          operatorNum: 100,
-      }},
+        []Op {{
+            key:         "a",
+            typ:         WriteDirect,
+            operatorNum: 100,
+        }},
     ),
     }
 
@@ -61,7 +60,7 @@ func TestTxEngineMVCCTO(t *testing.T) {
     }
 
     var totalTime time.Duration
-    round := 100000
+    round := 10000
     for i := 0; i < round; i++ {
         glog.V(10).Infof("\nRound: %d\n", i)
         duration, err := executeOneRoundMVCCTO(db, txns, initDBFunc)
@@ -84,30 +83,47 @@ func executeOneRoundMVCCTO(db *DB, txns []*Txn, initDBFunc func(*DB)) (time.Dura
         txn.ResetForTestOnly()
     }
 
+    //var newTxnsMutex sync.Mutex
+    //var dtTxns []*Txn
+    //te.AddPostCommitListener(func(txn *Txn) {
+    //    newTxnsMutex.Lock()
+    //    dtTxns = append(dtTxns, txn)
+    //    newTxnsMutex.Unlock()
+    //})
+
     start := time.Now()
-    newTxns := make([]*Txn, 0, len(txns))
-    var newTxnsMutex sync.Mutex
     te := NewTxEngineMVCCTO(4, db.lm)
-    te.AddPostCommitListener(func(txn *Txn) {
-        newTxnsMutex.Lock()
-        newTxns = append(newTxns, txn)
-        newTxnsMutex.Unlock()
-    })
     if err := te.ExecuteTxns(db, txns); err != nil {
         return 0, err
     }
     duration := time.Since(start)
-    if len(newTxns) != len(txns) {
-        return 0, fmt.Errorf("not the same, expect %d, but met %d", len(txns), len(newTxns))
+
+    newTxns := make([]*Txn, len(txns))
+    for i := range newTxns {
+        newTxns[i] = txns[i].Tail()
+        if newTxns[i].Head() != txns[i] {
+           return 0, fmt.Errorf("head not correct")
+        }
     }
-    toResult := db.Snapshot()
+
+    //strMapper := func(obj interface{})string {
+    //    return fmt.Sprintf("{%s}", obj.(*Txn).String())
+    //}
+    //sort.Sort(TxnSliceSortByTxID(dtTxns))
+    //newStr := Array2String(newTxns, strMapper)
+    //dtStr := Array2String(dtTxns, strMapper)
+    //if newStr != dtStr {
+    //    return 0, fmt.Errorf("array not equal, exp \n%s, but met %s\n", dtStr, newStr)
+    //}
+
+    res := db.Snapshot()
 
     if err := generateDatum(db, newTxns, initDBFunc); err != nil {
         return 0, err
     }
     datum := db.Snapshot()
-    if !areEqualMaps(toResult, datum) {
-        return 0, fmt.Errorf("expect '%s', but met '%s'", SerializeMap(datum), SerializeMap(toResult))
+    if !areEqualMaps(res, datum) {
+        return 0, fmt.Errorf("expect '%s', but met '%s'", SerializeMap(datum), SerializeMap(res))
     }
     return duration, nil
 }
