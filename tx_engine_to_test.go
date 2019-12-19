@@ -53,8 +53,6 @@ func TestTxEngineTimestampOrdering(t *testing.T) {
     initDBFunc := func (db *DB) {
         db.SetUnsafe("a", 0, 0, nil)
         db.SetUnsafe("b", 1, 0, nil)
-        db.committedVersions.Clear()
-        db.AddVersion(0)
         db.ts.c.Set(0)
     }
 
