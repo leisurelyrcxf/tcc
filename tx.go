@@ -73,34 +73,36 @@ var Counter = sync2.NewAtomicInt64(0)
 
 type Txn struct {
     // Readonly fields
-    TxId       int64
-    Ops        []Op
+    TxId         int64
+    Ops          []Op
 
     // Changeable fields.
-    commitData map[string]float64
-    timestamp  sync2.AtomicInt64
+    commitData   map[string]float64
+    readVersions map[string]int64
+    timestamp    sync2.AtomicInt64
 
-    status sync2.AtomicInt32
+    status       sync2.AtomicInt32
 
-    firstOpMet bool
+    firstOpMet   bool
 
-    mutex sync.Mutex
-    cond  sync.Cond
+    mutex        sync.Mutex
+    cond         sync.Cond
 }
 
 var emptyTx = &Txn{}
 
 func NewTx(ops []Op) *Txn {
     txn := &Txn{
-        TxId:       Counter.Add(1),
-        Ops:        ops,
+        TxId:         Counter.Add(1),
+        Ops:          ops,
 
-        commitData: make(map[string]float64),
-        timestamp:  sync2.NewAtomicInt64(0),
+        commitData:   make(map[string]float64),
+        readVersions: make(map[string]int64),
+        timestamp:    sync2.NewAtomicInt64(0),
 
-        status: sync2.NewAtomicInt32(int32(TxStatusInitialized)),
+        status:       sync2.NewAtomicInt32(int32(TxStatusInitialized)),
 
-        firstOpMet:  false,
+        firstOpMet:   false,
     }
     txn.cond = sync.Cond{
         L: &txn.mutex,
@@ -110,15 +112,16 @@ func NewTx(ops []Op) *Txn {
 
 func (tx *Txn) Clone() *Txn {
     newTxn := &Txn{
-        TxId:       tx.TxId,
-        Ops:        tx.Ops,
+        TxId:         tx.TxId,
+        Ops:          tx.Ops,
 
-        commitData: make(map[string]float64),
-        timestamp:  sync2.NewAtomicInt64(0),
+        commitData:   make(map[string]float64),
+        readVersions: make(map[string]int64),
+        timestamp:    sync2.NewAtomicInt64(0),
 
-        status:     sync2.NewAtomicInt32(int32(TxStatusInitialized)),
+        status:       sync2.NewAtomicInt32(int32(TxStatusInitialized)),
 
-        firstOpMet: false,
+        firstOpMet:   false,
     }
     newTxn.cond = sync.Cond{
         L: &newTxn.mutex,
@@ -128,6 +131,12 @@ func (tx *Txn) Clone() *Txn {
 
 func (tx *Txn) AddCommitData(key string, val float64) {
     tx.commitData[key] = val
+}
+
+func (tx *Txn) AddReadVersion(key string, val int64) {
+    _, containsKey := tx.readVersions[key]
+    assert.Must(!containsKey)
+    tx.readVersions[key] = val
 }
 
 func (tx *Txn) CollectKeys() []string {
@@ -153,6 +162,7 @@ func (tx *Txn) SetStatusLocked(status TxStatus) {
 func (tx *Txn) Start(ts int64) {
     assert.Must(tx.timestamp.Get() == 0)
     assert.Must(len(tx.commitData) == 0)
+    assert.Must(len(tx.readVersions) == 0)
     assert.Must(tx.GetStatus() == TxStatusInitialized)
     assert.Must(!tx.firstOpMet)
 
@@ -209,6 +219,7 @@ func (tx *Txn) ResetForTestOnly() {
     tx.mutex.Lock()
 
     tx.ClearCommitData()
+    tx.ClearReadVersions()
     tx.timestamp.Set(0)
 
     tx.SetStatusLocked(TxStatusInitialized)
@@ -225,8 +236,16 @@ func (tx *Txn) GetCommitData() map[string]float64 {
     return tx.commitData
 }
 
+func (tx *Txn) GetReadVersions() map[string]int64 {
+    return tx.readVersions
+}
+
 func (tx *Txn) ClearCommitData() {
     tx.commitData = make(map[string]float64)
+}
+
+func (tx *Txn) ClearReadVersions() {
+    tx.readVersions = make(map[string]int64)
 }
 
 func (tx *Txn) CheckFirstOp(ts *TimeServer) {

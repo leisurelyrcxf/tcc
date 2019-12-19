@@ -14,14 +14,10 @@ func NewDBValue(val float64, writtenTxn *Txn) DBValue {
     }
 }
 
-var EmptyDBValue = DBValue{}
-
 type DBVersionedValue struct {
     DBValue
     Version int64
 }
-
-var EmptyDBVersionedValue = DBVersionedValue{}
 
 func NewDBVersionedValue(val float64, writtenTxn *Txn, version int64) DBVersionedValue {
     return DBVersionedValue{
@@ -52,12 +48,12 @@ func NewDBVersionedValues() DBVersionedValues {
     }
 }
 
-func (vvs DBVersionedValues) Get(version float64) (DBValue, bool) {
+func (vvs DBVersionedValues) Get(version int64) (DBValue, error) {
     val, ok := vvs.ConcurrentTreeMap.Get(version)
     if ok {
-        return val.(DBValue), true
+        return val.(DBValue), nil
     }
-    return EmptyDBValue, false
+    return DBValue{}, VersionNotExist
 }
 
 func (vvs DBVersionedValues) Put(version int64, val float64, writtenTxn *Txn) {
@@ -69,7 +65,7 @@ func (vvs DBVersionedValues) FindMaxBelow(upperVersion int64) (DBVersionedValue,
         return key.(int64) <= upperVersion
     })
     if version == nil {
-        return EmptyDBVersionedValue, VersionNotExist
+        return DBVersionedValue{}, VersionNotExist
     }
     return NewDBVersionedValueWithDBValue(dbVal.(DBValue), version.(int64)), nil
 }
@@ -104,12 +100,20 @@ type DBValue struct {
     WrittenTxn *Txn
 }
 
-func (db *DB) GetDBValueMaxVersionBelow(key string, upperVersion int64) (DBVersionedValue, error) {
+func (db *DB) GetDBVersionedValues(key string) (DBVersionedValues, error) {
     val, ok := db.values.Get(key)
     if !ok {
-        return EmptyDBVersionedValue, KeyNotExist
+        return DBVersionedValues{}, KeyNotExist
     }
-    return val.(DBVersionedValues).FindMaxBelow(upperVersion)
+    return val.(DBVersionedValues), nil
+}
+
+func (db *DB) GetDBValueMaxVersionBelow(key string, upperVersion int64) (DBVersionedValue, error) {
+    vvs, err := db.GetDBVersionedValues(key)
+    if err != nil {
+        return DBVersionedValue{}, err
+    }
+    return vvs.FindMaxBelow(upperVersion)
 }
 
 func (db *DB) GetDBValue(key string) (DBVersionedValue, error) {
@@ -128,15 +132,15 @@ func (db *DB) Get(key string) (float64, error) {
     return 0.0, KeyNotExist
 }
 
-func (db *DB) mustGetTreeMapValuePartialLocked(key string, holdsRLock bool) DBVersionedValues {
+func (db *DB) mustGetTreeMapValue(key string, holdsWriteLock bool) DBVersionedValues {
     val, ok := db.values.Get(key)
     if ok {
         return val.(DBVersionedValues)
     }
 
-    if holdsRLock {
+    if !holdsWriteLock {
         db.lm.UpgradeLock(key)
-        defer db.lm.UpgradeLock(key)
+        defer db.lm.DegradeLock(key)
     }
 
     val, ok = db.values.Get(key)
@@ -148,9 +152,17 @@ func (db *DB) mustGetTreeMapValuePartialLocked(key string, holdsRLock bool) DBVe
     return vvs
 }
 
-func (db *DB) SetPartialLocked(key string, val float64, writtenTxn *Txn, holdRLock bool) {
-    vvs := db.mustGetTreeMapValuePartialLocked(key, holdRLock)
+func (db *DB) SetMVCC(key string, val float64, writtenTxn *Txn, holdsWriteLock bool) {
+    vvs := db.mustGetTreeMapValue(key, holdsWriteLock)
     vvs.Put(writtenTxn.GetTimestamp(), val, writtenTxn)
+}
+
+func (db *DB) MustRemoveVersion(key string, version int64) {
+    vvs, err := db.GetDBVersionedValues(key)
+    assert.MustNoError(err)
+    _, err = vvs.Get(version)
+    assert.MustNoError(err)
+    vvs.Remove(version)
 }
 
 func (db *DB) SetSafe(key string, val float64, writtenTxn *Txn) bool {
@@ -172,7 +184,7 @@ func (db *DB) SetUnsafe(key string, val float64, version int64, writtenTxn *Txn)
         db.values.Set(key, NewDBVersionedValue(val, writtenTxn, version))
         return
     }
-    db.SetPartialLocked(key, val, emptyTx, false)
+    db.SetMVCC(key, val, emptyTx, false)
 }
 
 func (db *DB) Snapshot() map[string]float64 {

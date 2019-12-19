@@ -34,45 +34,40 @@ func compactKey(key string, version int64) string {
     return fmt.Sprintf("%s\r\n%d", key, version)
 }
 
-func getMaxTxForKey2(key string, version int64, m *data_struct.ConcurrentMap) *Txn {
+func getMaxTxForKeyAndVersion(key string, version int64, m *data_struct.ConcurrentMap) *Txn {
     newKey := compactKey(key, version)
-    if obj, ok := m.Get(newKey); !ok {
+    if tmObj, ok := m.Get(newKey); !ok {
         return emptyTx
     } else {
-        tm := obj.(*data_struct.ConcurrentTreeMap)
-
-        obj, _ = tm.Max()
-        if obj == nil {
+        tm := tmObj.(*data_struct.ConcurrentTreeMap)
+        maxKey, _ := tm.MaxIf(func(key interface{}) bool {
+            return !key.(*Txn).GetStatus().HasError()
+        })
+        if maxKey == nil {
             return emptyTx
         }
-        txn := obj.(*Txn)
-        status := txn.GetStatus()
-        if status.HasError() {
-            removeTxForKey2(key, version, txn, m)
-            return getMaxTxForKey2(key, version, m)
-        }
-        return txn
+        return maxKey.(*Txn)
     }
 }
 
 func (te *TxEngineMVCCTO) getMaxReadTxForKey(key string, version int64) *Txn {
-    return getMaxTxForKey2(key, version, &te.mr)
+    return getMaxTxForKeyAndVersion(key, version, &te.mr)
 }
 
 func (te *TxEngineMVCCTO) getMaxWriteTxForKey(key string, version int64) *Txn {
-    return getMaxTxForKey2(key, version, &te.mw)
+    return getMaxTxForKeyAndVersion(key, version, &te.mw)
 }
 
-func putTxForKey2(key string, version int64, tx *Txn, m *data_struct.ConcurrentMap, lm *LockManager) {
+func putTxForKeyAndVersion(key string, version int64, tx *Txn, m *data_struct.ConcurrentMap, lm *LockManager) {
     newKey := compactKey(key, version)
-    obj, _ := m.Get(newKey)
+    tmObj, _ := m.Get(newKey)
 
     var tm *data_struct.ConcurrentTreeMap
-    if obj == nil {
+    if tmObj == nil {
         lm.UpgradeLock(newKey)
 
-        obj, _ = m.Get(newKey)
-        if obj == nil {
+        tmObj, _ = m.Get(newKey)
+        if tmObj == nil {
             tm = data_struct.NewConcurrentTreeMap(func(a, b interface{}) int {
                 ta := a.(*Txn)
                 tb := b.(*Txn)
@@ -80,41 +75,41 @@ func putTxForKey2(key string, version int64, tx *Txn, m *data_struct.ConcurrentM
             })
             m.Set(newKey, tm)
         } else {
-            tm = obj.(*data_struct.ConcurrentTreeMap)
+            tm = tmObj.(*data_struct.ConcurrentTreeMap)
         }
 
         lm.DegradeLock(newKey)
     } else {
-        tm = obj.(*data_struct.ConcurrentTreeMap)
+        tm = tmObj.(*data_struct.ConcurrentTreeMap)
     }
 
     tm.Put(tx, nil)
 }
 
 func (te *TxEngineMVCCTO) putReadTxForKey(key string, version int64, tx *Txn, lm *LockManager) {
-    putTxForKey2(key, version, tx, &te.mr, lm)
+    putTxForKeyAndVersion(key, version, tx, &te.mr, lm)
 }
 
 func (te *TxEngineMVCCTO) putWriteTxForKey(key string, version int64, tx *Txn) {
-    putTxForKey2(key, version, tx, &te.mw, nil)
+    putTxForKeyAndVersion(key, version, tx, &te.mw, nil)
 }
 
-func removeTxForKey2(key string, version int64, tx *Txn, m *data_struct.ConcurrentMap) {
+func removeTxForKeyAndVersion(key string, version int64, tx *Txn, m *data_struct.ConcurrentMap) {
     newKey := compactKey(key, version)
-    obj, _ := m.Get(newKey)
-    if obj == nil {
+    tmObj, _ := m.Get(newKey)
+    if tmObj == nil {
         return
     }
-    tm := obj.(*data_struct.ConcurrentTreeMap)
+    tm := tmObj.(*data_struct.ConcurrentTreeMap)
     tm.Remove(tx)
 }
 
 func (te *TxEngineMVCCTO) removeReadTxForKey(key string, version int64, tx *Txn) {
-    removeTxForKey2(key, version, tx, &te.mr)
+    removeTxForKeyAndVersion(key, version, tx, &te.mr)
 }
 
 func (te *TxEngineMVCCTO) removeWriteTxForKey(key string, version int64, tx *Txn) {
-    removeTxForKey2(key, version, tx, &te.mw)
+    removeTxForKeyAndVersion(key, version, tx, &te.mw)
 }
 
 func (te *TxEngineMVCCTO) AddPostCommitListener(cb func(*Txn)) {
@@ -192,9 +187,6 @@ func (te *TxEngineMVCCTO) _executeSingleTx(db *DB, txn *Txn) (err error) {
 }
 
 func (te *TxEngineMVCCTO) commit(db *DB, tx *Txn) {
-    for key, val := range tx.GetCommitData() {
-        _ = db.SetSafe(key, val, tx)
-    }
     tx.Done(TxStatusSucceeded)
 
     for _, l := range te.postCommitListeners {
@@ -207,13 +199,13 @@ func (te *TxEngineMVCCTO) rollback(db *DB, tx *Txn, reason error) {
     if reason.(*TxnError).IsRetryable() {
         retryLaterStr = ", retry later"
     }
-    glog.V(10).Infof("rollback txn(%s) due to error '%s'%s", tx.String(), reason.Error(), retryLaterStr)
     ts := tx.GetTimestamp()
-    for _, key := range tx.CollectKeys() {
-        te.removeReadTxForKey(key, ts, tx)
-        te.removeWriteTxForKey(key, ts, tx)
+    for key, _ := range tx.GetCommitData() {
+        db.MustRemoveVersion(key, ts)
     }
     tx.ClearCommitData()
+    tx.ClearReadVersions()
+    glog.V(10).Infof("rollback txn(%s) due to error '%s'%s", tx.String(), reason.Error(), retryLaterStr)
     if reason == txnErrStaleWrite {
         tx.Done(TxStatusFailedRetryable)
     } else if reason == txnErrConflict {
@@ -228,7 +220,12 @@ func (te *TxEngineMVCCTO) executeOp(db *DB, txn *Txn, op Op) error {
         return te.executeIncrOp(db, txn, op)
     }
     if op.typ == WriteDirect {
-        return te.set(txn, op.key, op.operatorNum, db.ts)
+        // Needs to find out read versions still.
+        _, err := te.get(db, txn, op.key)
+        if err != nil {
+            return err
+        }
+        return te.set(db, txn, op.key, op.operatorNum, db.ts)
     }
     panic("not implemented")
 }
@@ -248,7 +245,7 @@ func (te *TxEngineMVCCTO) executeIncrOp(db *DB, txn *Txn, op Op) error {
     default:
         panic("unimplemented")
     }
-    return te.set(txn, op.key, val, db.ts)
+    return te.set(db, txn, op.key, val, db.ts)
 }
 
 func (te *TxEngineMVCCTO) get(db *DB, txn *Txn, key string) (float64, error) {
@@ -284,7 +281,7 @@ func (te *TxEngineMVCCTO) get(db *DB, txn *Txn, key string) (float64, error) {
     }
 }
 
-func (te *TxEngineMVCCTO) set(txn *Txn, key string, val float64, timeServ *TimeServer) error {
+func (te *TxEngineMVCCTO) set(db *DB, txn *Txn, key string, val float64, timeServ *TimeServer) error {
     te.lm.Lock(key)
     defer te.lm.Unlock(key)
     glog.V(10).Infof("txn(%s) want to set key '%s' to value %f", txn.String(), key, val)
