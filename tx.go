@@ -172,22 +172,21 @@ func (tx *Txn) IncrRound() {
     tx.round.Add(1)
 }
 
-func (tx *Txn) WaitUntilDoneOrRestarted(round int32, waiter *Txn) {
+func (tx *Txn) WaitUntilDoneOrRestarted(waiter *Txn, round int32) {
     tx.mutex.Lock()
 
     glog.V(5).Infof("txn(%s) wait for txn(%s)'s %dth round to finish", waiter.String(), tx.String(), round)
     loopTimes := 0
-    for tx.GetRound() == round && !tx.GetStatus().Done() && waiter.GetTimestamp() > tx.GetTimestamp()  {
+    for !tx.GetStatus().Done() && waiter.GetTimestamp() > tx.GetTimestamp()  {
         if loopTimes > 0 {
-            glog.V(5).Infof("txn(%s) wait for txn(%s)'s %dth round to finish", waiter.String(), tx.String(), round)
+            glog.V(5).Infof("txn(%s) waited once txn(%s)'s %dth round successfully", waiter.String(), tx.String(), round)
+            glog.V(5).Infof("txn(%s) wait once for txn(%s)'s %dth round to finish", waiter.String(), tx.String(), round)
         }
         tx.cond.Wait()
-        glog.V(5).Infof("txn(%s) waited once txn(%s)'s %dth round successfully", waiter.String(), tx.String(), round)
         loopTimes++
     }
-    if loopTimes == 0 {
-        glog.V(5).Infof("txn(%s) waited txn(%s)'s %dth round successfully", waiter.String(), tx.String(), round)
-    }
+    glog.V(5).Infof("txn(%s) waited txn(%s)'s %dth round successfully", waiter.String(), tx.String(), round)
+
     tx.mutex.Unlock()
 }
 

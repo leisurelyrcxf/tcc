@@ -4,30 +4,28 @@ import (
     "fmt"
     "github.com/golang/glog"
     "sync"
+    "time"
     "tcc/assert"
     "tcc/data_struct"
-    "time"
 )
 
-var txnErrConflict = NewTxnError(fmt.Errorf("txn conflict"), true)
-var txnErrStaleWrite = NewTxnError(fmt.Errorf("stale write"), true)
-var errPredFailed = fmt.Errorf("predicate failed")
-
-type TxEngineTO struct {
+type TxEngineTOMVCC struct {
     threadNum      int
     mw             data_struct.ConcurrentMap
     mr             data_struct.ConcurrentMap
+    lm             *LockManager
     txns           chan *Txn
     committingTxns chan *Txn
     committerDone  chan struct{}
     errs           chan *TxnError
 }
 
-func NewTxEngineTO(threadNum int, lm *LockManager) *TxEngineTO {
-    return &TxEngineTO{
+func NewTxEngineTOMVCC(threadNum int, lm *LockManager) *TxEngineTOMVCC {
+    return &TxEngineTOMVCC{
         threadNum:      threadNum,
         mw:             data_struct.NewConcurrentMap(1024),
         mr:             data_struct.NewConcurrentMap(1024),
+        lm:             lm,
         txns:           make(chan *Txn, threadNum),
         committingTxns: make(chan *Txn, 100),
         committerDone:  make(chan struct{}),
@@ -35,7 +33,7 @@ func NewTxEngineTO(threadNum int, lm *LockManager) *TxEngineTO {
     }
 }
 
-func getMaxTxForKey(key string, m *data_struct.ConcurrentMap) *Txn {
+func (te *TxEngineTOMVCC) getMaxTxForKey(key string, m *data_struct.ConcurrentMap) *Txn {
     if obj, ok := m.Get(key); !ok {
         return emptyTx
     } else {
@@ -55,20 +53,20 @@ func getMaxTxForKey(key string, m *data_struct.ConcurrentMap) *Txn {
     }
 }
 
-func (te *TxEngineTO) getMaxReadTxForKey(key string) *Txn {
-    return getMaxTxForKey(key, &te.mr)
+func (te *TxEngineTOMVCC) getMaxReadTxForKey(key string) *Txn {
+    return te.getMaxTxForKey(key, &te.mr)
 }
 
-func (te *TxEngineTO) getMaxWriteTxForKey(key string) *Txn {
-    return getMaxTxForKey(key, &te.mw)
+func (te *TxEngineTOMVCC) getMaxWriteTxForKey(key string) *Txn {
+    return te.getMaxTxForKey(key, &te.mw)
 }
 
-func putTxForKey(key string, tx *Txn, m *data_struct.ConcurrentMap, lm *LockManager) {
+func (te *TxEngineTOMVCC) putTxForKey(key string, tx *Txn, m *data_struct.ConcurrentMap, lm *LockManager) {
     obj, _ := m.Get(key)
 
     var tm *data_struct.ConcurrentTreeMap
     if obj == nil {
-        lm.UpgradeLock(key)
+        lm.Lock(key)
 
         obj, _ = m.Get(key)
         if obj == nil {
@@ -82,7 +80,7 @@ func putTxForKey(key string, tx *Txn, m *data_struct.ConcurrentMap, lm *LockMana
             tm = obj.(*data_struct.ConcurrentTreeMap)
         }
 
-        lm.DegradeLock(key)
+        lm.Lock(key)
     } else {
         tm = obj.(*data_struct.ConcurrentTreeMap)
     }
@@ -90,15 +88,15 @@ func putTxForKey(key string, tx *Txn, m *data_struct.ConcurrentMap, lm *LockMana
     tm.Put(tx, nil)
 }
 
-func (te *TxEngineTO) putReadTxForKey(key string, tx *Txn, lm *LockManager) {
-    putTxForKey(key, tx, &te.mr, lm)
+func (te *TxEngineTOMVCC) putReadTxForKey(key string, tx *Txn, lm *LockManager) {
+    te.putTxForKey(key, tx, &te.mr, lm)
 }
 
-func (te *TxEngineTO) putWriteTxForKey(key string, tx *Txn) {
-    putTxForKey(key, tx, &te.mw, nil)
+func (te *TxEngineTOMVCC) putWriteTxForKey(key string, tx *Txn) {
+    te.putTxForKey(key, tx, &te.mw, nil)
 }
 
-func removeTxForKey(key string, tx *Txn, m *data_struct.ConcurrentMap) {
+func (te *TxEngineTOMVCC) removeTxForKey(key string, tx *Txn, m *data_struct.ConcurrentMap) {
     obj, _ := m.Get(key)
     if obj == nil {
         return
@@ -107,15 +105,15 @@ func removeTxForKey(key string, tx *Txn, m *data_struct.ConcurrentMap) {
     tm.Remove(tx)
 }
 
-func (te *TxEngineTO) removeReadTxForKey(key string, tx *Txn) {
-    removeTxForKey(key, tx, &te.mr)
+func (te *TxEngineTOMVCC) removeReadTxForKey(key string, tx *Txn) {
+    te.removeTxForKey(key, tx, &te.mr)
 }
 
-func (te *TxEngineTO) removeWriteTxForKey(key string, tx *Txn) {
-    removeTxForKey(key, tx, &te.mw)
+func (te *TxEngineTOMVCC) removeWriteTxForKey(key string, tx *Txn) {
+    te.removeTxForKey(key, tx, &te.mw)
 }
 
-func (te *TxEngineTO) ExecuteTxns(db *DB, txns []*Txn) error {
+func (te *TxEngineTOMVCC) ExecuteTxns(db *DB, txns []*Txn) error {
     go func() {
         for _, txn := range txns {
             te.txns <- txn
@@ -136,11 +134,11 @@ func (te *TxEngineTO) ExecuteTxns(db *DB, txns []*Txn) error {
 
     go te.committer(db)
 
-    // Wait txn threads to end.
+    // Wait txn threads TOMVCC end.
     wg.Wait()
-    // Notify committer to end.
+    // Notify committer TOMVCC end.
     close(te.committingTxns)
-    // Wait committer to end.
+    // Wait committer TOMVCC end.
     <-te.committerDone
 
     select {
@@ -151,7 +149,7 @@ func (te *TxEngineTO) ExecuteTxns(db *DB, txns []*Txn) error {
     }
 }
 
-func (te *TxEngineTO) executeTxnsSingleThread(db *DB) error {
+func (te *TxEngineTOMVCC) executeTxnsSingleThread(db *DB) error {
     for txn := range te.txns {
         if err := te.executeSingleTx(db, txn); err != nil {
             return err
@@ -160,7 +158,7 @@ func (te *TxEngineTO) executeTxnsSingleThread(db *DB) error {
     return nil
 }
 
-func (te *TxEngineTO) committer(db *DB) {
+func (te *TxEngineTOMVCC) committer(db *DB) {
     defer close(te.committerDone)
     for txn := range te.committingTxns {
         ts := txn.GetTimestamp()
@@ -188,12 +186,12 @@ func (te *TxEngineTO) committer(db *DB) {
         }
         glog.Infof("txn(%s) succeeded", txn.String())
         txn.Done(TxStatusSucceeded)
-        // Mark this version visible, this is an atomic commit.
+        // Mark this version visible, this is an aTOMVCCmic commit.
         db.AddVersion(ts)
     }
 }
 
-func (te *TxEngineTO) executeSingleTx(db *DB, tx *Txn) error {
+func (te *TxEngineTOMVCC) executeSingleTx(db *DB, tx *Txn) error {
     for {
         err := te._executeSingleTx(db, tx)
         if err != nil && err.(*TxnError).IsRetryable() {
@@ -203,7 +201,7 @@ func (te *TxEngineTO) executeSingleTx(db *DB, tx *Txn) error {
     }
 }
 
-func (te *TxEngineTO) _executeSingleTx(db *DB, txn *Txn) (err error) {
+func (te *TxEngineTOMVCC) _executeSingleTx(db *DB, txn *Txn) (err error) {
     // Assign a new timestamp.
     txn.Start(db.ts.FetchTimestamp())
 
@@ -223,12 +221,12 @@ func (te *TxEngineTO) _executeSingleTx(db *DB, txn *Txn) (err error) {
     return
 }
 
-func (te *TxEngineTO) rollback(tx *Txn, reason error) {
+func (te *TxEngineTOMVCC) rollback(tx *Txn, reason error) {
     var retryLaterStr string
     if reason.(*TxnError).IsRetryable() {
         retryLaterStr = ", retry later"
     }
-    glog.Infof("rollback txn(%s) due to error '%s'%s", tx.String(), reason.Error(), retryLaterStr)
+    glog.Infof("rollback txn(%s) due TOMVCC error '%s'%s", tx.String(), reason.Error(), retryLaterStr)
     for _, key := range tx.CollectKeys() {
         te.removeReadTxForKey(key, tx)
         te.removeWriteTxForKey(key, tx)
@@ -243,17 +241,17 @@ func (te *TxEngineTO) rollback(tx *Txn, reason error) {
     }
 }
 
-func (te *TxEngineTO) executeOp(db *DB, txn *Txn, op Op) error {
+func (te *TxEngineTOMVCC) executeOp(db *DB, txn *Txn, op Op) error {
     if op.typ.IsIncr() {
         return te.executeIncrOp(db, txn, op)
     }
     if op.typ == WriteDirect {
-        return te.set(db, txn, op.key, op.operatorNum)
+        return te.set(txn, op.key, op.operatorNum, db.ts)
     }
     panic("not implemented")
 }
 
-func (te *TxEngineTO) executeIncrOp(db *DB, txn *Txn, op Op) error {
+func (te *TxEngineTOMVCC) executeIncrOp(db *DB, txn *Txn, op Op) error {
     val, err := te.get(db, txn, op.key)
     if err != nil {
         return err
@@ -268,81 +266,35 @@ func (te *TxEngineTO) executeIncrOp(db *DB, txn *Txn, op Op) error {
     default:
         panic("unimplemented")
     }
-    return te.set(db, txn, op.key, val)
+    return te.set(txn, op.key, val, db.ts)
 }
 
-func (te *TxEngineTO) get(db *DB, txn *Txn, key string) (float64, error) {
-    glog.Infof("txn(%s) want to get key '%s'", txn.String(), key)
+func (te *TxEngineTOMVCC) get(db *DB, txn *Txn, key string) (val float64, err error) {
+    te.lm.RLock(key)
+    defer te.lm.RUnlock(key)
+    glog.Infof("txn(%s) want TOMVCC get key '%s'", txn.String(), key)
 
     txn.CheckFirstOp(db.ts)
     // ts won't change because only this thread can modify it's value.
     ts := txn.GetTimestamp()
 
-    getter := func(pred func()bool) (float64, error) {
-        db.lm.Lock(key)
-        defer db.lm.Unlock(key)
-
-        if !pred() {
-            return 0, errPredFailed
-        }
-
-        vv, dbErr := db.GetDBValue(key)
-        if dbErr != nil {
-            return 0, NewTxnError(dbErr, false)
-        }
-
-        if txn.ReadVersion == 0 {
-            txn.ReadVersion = db.FindMaxVersion(func(version int64) bool {
-                return version <= ts
-            })
-        }
-        if txn.ReadVersion < vv.Version {
-            // Read future versions, can't do anything
-            return 0, txnErrConflict
-        }
-        writtenTxn := vv.WrittenTxn
-        if writtenTxn != nil && !writtenTxn.GetStatus().Done() {
-            // Shouldn't be possible since commit is atomic.
-            assert.Must(false)
-            // Committing, wait till valid.
-            //writtenTxn.WaitUntilDone(txn)
-        }
-        te.putReadTxForKey(key, txn, nil)
-        glog.Infof("txn(%s) got value %f for key '%s'", txn.String(), vv.Value, key)
-        return vv.Value, nil
-    }
-
     for {
         maxWriteTxn := te.getMaxWriteTxForKey(key)
-        // round is a snapshot, it maybe newer than maxWriteTxnTs, maybe not
+        // round is also a snapshot
         round := maxWriteTxn.GetRound()
         // maxWriteTxnTs is only a snapshot may change any time later.
         maxWriteTxnTs := maxWriteTxn.GetTimestamp()
         if maxWriteTxn == emptyTx || maxWriteTxnTs == ts {
             // Empty or is self, always safe.
             assert.Must(maxWriteTxn == emptyTx || maxWriteTxn == txn)
-
-            val, err := getter(func()bool {
-                return te.getMaxWriteTxForKey(key) == maxWriteTxn
-            })
-            if err == errPredFailed {
-                continue
-            }
-            return val, err
+            break
         }
 
         if maxWriteTxnTs > ts  {
             // Read-write conflict.
             // If we can't read later version, then it's still safe.
             // Let's check later.
-            //val, err := getter(func()bool {
-            //    return te.getMaxWriteTxForKey(key) == maxWriteTxn
-            //})
-            //if err == errPredFailed {
-            //    continue
-            //}
-            //return val, err
-            return 0, txnErrConflict
+            break
         }
 
         // assert.Must(maxWriteTxnTs < ts)
@@ -352,127 +304,107 @@ func (te *TxEngineTO) get(db *DB, txn *Txn, key string) (float64, error) {
         if mwStatus == TxStatusSucceeded {
             // Already succeeded, safe property could be proved as below:
             // For such tx which holds maxWriteTxn.Timestamp < tx.Timestamp < this_txn.Timestamp:
-            //     If tx has already written to key, then it's a contradiction (maxWriteTxn will be tx instead);
-            //     if tx has not written to the key, it will never have a chance to write to the key in the future
+            //     If tx has already written TOMVCC key, then it's a contradiction (maxWriteTxn will be tx instead);
+            //     if tx has not written TOMVCC the key, it will never have a chance TOMVCC write TOMVCC the key in the future
             //         because it will find tx.Timestamp < maxReadTxn.Timestamp
             //         (maxReadTxn.Timestamp >= this_txn.Timestamp).
             //
             // For such tx which holds tx.Timestamp < maxWriteTxn.Timestamp < this_txn.Timestamp, since
-            // maxWriteTxn's write to the key has already been saved to db, tx's write to the key will
+            // maxWriteTxn's write TOMVCC the key has already been saved TOMVCC db, tx's write TOMVCC the key will
             // never be visible.
             //     If it has already written, then the value has been overwritten by maxWriteTxn;
             //     if it has not written, it will be either omitted (Thomas' write rule),
             //     either be discarded (if Thomas's write rule is not applied.
-            val, err := getter(func()bool {
-                // No need to check write timestamp since it won't change anymore after succeeded.
-                return te.getMaxWriteTxForKey(key) == maxWriteTxn
-            })
-            if err == errPredFailed {
-                continue
-            }
-            return val, err
+            break
         }
         if mwStatus.HasError() {
             // Already failed, then this maxWriteTxn must have been rollbacked, retry.
             continue
         }
 
-        if maxWriteTxn.GetTimestamp() != maxWriteTxnTs {
-            // Has changed since.
+        // Wait until depending txn finishes.
+        if maxWriteTxn.GetRound() != round  ||
+            maxWriteTxn.GetStatus().Done() ||
+            maxWriteTxn.GetTimestamp() != maxWriteTxnTs {
            continue
         }
+        db.lm.RUnlock(key)
         maxWriteTxn.WaitUntilDoneOrRestarted(txn, round)
+        db.lm.RLock(key)
     }
+
+    vv, dbErr := db.GetDBValue(key)
+    if dbErr != nil {
+        err = NewTxnError(dbErr, false)
+        return
+    }
+
+    if txn.ReadVersion == 0 {
+        txn.ReadVersion = db.FindMaxVersion(func(version int64) bool {
+            return version <= ts
+        })
+    }
+    if txn.ReadVersion < vv.Version {
+        // Read future versions, can't do anything
+        err = txnErrConflict
+        return
+    }
+    writtenTxn := vv.WrittenTxn
+    if writtenTxn != nil && !writtenTxn.GetStatus().Done() {
+        // Shouldn't be possible since commit is aTOMVCCmic.
+        assert.Must(false)
+        // Committing, wait till valid.
+        //writtenTxn.WaitUntilDone(txn)
+    }
+    te.putReadTxForKey(key, txn, db.lm)
+    val = vv.Value
+    glog.Infof("txn(%s) got value %f for key '%s'", txn.String(), val, key)
+    return
 }
 
-func (te *TxEngineTO) set(db *DB, txn *Txn, key string, val float64) (err error) {
-    glog.Infof("txn(%s) want to set key '%s' to value %f", txn.String(), key, val)
+func (te *TxEngineTOMVCC) set(txn *Txn, key string, val float64, timeServ *TimeServer) (err error) {
+    te.lm.Lock(key)
+    defer te.lm.Unlock(key)
+    glog.Infof("txn(%s) want TOMVCC set key '%s' TOMVCC value %f", txn.String(), key, val)
 
-    txn.CheckFirstOp(db.ts)
+    txn.CheckFirstOp(timeServ)
     ts := txn.GetTimestamp()
 
-    setter := func(predicate func()bool) error {
-        db.lm.Lock(key)
-        defer db.lm.Unlock(key)
-
-        if !predicate() {
-            return errPredFailed
-        }
-        te.putWriteTxForKey(key, txn)
-        txn.AddCommitData(key, val)
-        glog.Infof("txn(%s) succeeded in setting key '%s' to value %f", txn.String(), key, val)
-        return nil
+    // Write-read conflict
+    if ts < te.getMaxReadTxForKey(key).GetTimestamp() {
+        err = txnErrConflict
+        return
     }
 
-    voidSetter := func(predicate func()bool) error {
-        db.lm.Lock(key)
-        defer db.lm.Unlock(key)
-
-        if !predicate() {
-            return errPredFailed
-        }
-        return nil
-    }
-
+    // Write-write conflict
     for {
-        // Write-read conflict
-        maxReadTxn := te.getMaxReadTxForKey(key)
-        maxReadTxnTs := maxReadTxn.GetTimestamp()
-        if ts < maxReadTxnTs {
-            err = txnErrConflict
-            return
-        }
-
-        // Write-write conflict
         maxWriteTxn := te.getMaxWriteTxForKey(key)
-        maxWriteTxnTs := maxWriteTxn.GetTimestamp()
-        if ts < maxWriteTxnTs {
+        if ts < maxWriteTxn.GetTimestamp() {
             for i := 0; i < 10; i++ {
-               status := maxWriteTxn.GetStatus()
-               if status.Done() {
-                   if status.Succeeded() {
-                       break
-                   }
-                   //assert.Must(status.HasError())
-                   break
-               }
-               time.Sleep(1 * time.Millisecond)
-            }
-            stats := maxWriteTxn.GetStatus()
-
-            if stats.Succeeded() {
-                // Apply Thomas's write rule.
-                err := voidSetter(func()bool {
-                    mw := te.getMaxWriteTxForKey(key)
-                    mr := te.getMaxReadTxForKey(key)
-                    // No need to check write timestamp since it won't change anymore after succeeded.
-                    return mw == maxWriteTxn &&
-                        mr == maxReadTxn && mr.GetTimestamp() == maxReadTxnTs
-                })
-                if err == errPredFailed {
-                    continue
+                status := maxWriteTxn.GetStatus()
+                if status.Done() {
+                    if status.Succeeded() {
+                        // Apply Thomas's write rule.
+                        return
+                    }
+                    //assert.Must(status.HasError())
+                    break
                 }
-                return err
+                time.Sleep(1 * time.Millisecond)
             }
-
-            if stats.HasError() {
+            if maxWriteTxn.GetStatus().HasError() {
                 continue
             }
-
-            //Since maxWriteTxn's status is not known, it could rollback later,
-            //ellipsis not safe here.
+            // Since maxWriteTxn's status is not known, it could rollback later,
+            // ellipsis not safe here.
             return txnErrStaleWrite
         } else {
-            err := setter(func()bool {
-                mw := te.getMaxWriteTxForKey(key)
-                mr := te.getMaxReadTxForKey(key)
-                return mw == maxWriteTxn && mw.GetTimestamp() == maxWriteTxnTs &&
-                    mr == maxReadTxn && mr.GetTimestamp() == maxReadTxnTs
-            })
-            if err == errPredFailed {
-                continue
-            }
-            return err
+            break
         }
     }
+
+    txn.AddCommitData(key, val)
+    te.putWriteTxForKey(key, txn)
+    glog.Infof("txn(%s) succeeded in setting key '%s' TOMVCC value %f", txn.String(), key, val)
+    return
 }
