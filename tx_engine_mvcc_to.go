@@ -257,6 +257,7 @@ func (te *TxEngineMVCCTO) get(db *DB, txn *Txn, key string) (float64, error) {
         }
         stats := dbVal.WrittenTxn.GetStatus()
         if stats.Succeeded() {
+            // TODO remove this
             assert.Must(dbVal.WrittenTxn.GetTimestamp() == dbVal.Version)
             te.putReadTxForKey(key, dbVal.Version, txn, db.lm)
             glog.V(10).Infof("txn(%s) got value %f for key '%s'", txn.String(), dbVal.Value, key)
@@ -266,11 +267,8 @@ func (te *TxEngineMVCCTO) get(db *DB, txn *Txn, key string) (float64, error) {
         if stats.HasError() {
             continue
         }
-        if dbVal.WrittenTxn.GetStatus().Done() || dbVal.WrittenTxn.GetTimestamp() > ts {
-            continue
-        }
         db.lm.RUnlock(key)
-        dbVal.WrittenTxn.WaitUntilDone(txn)
+        dbVal.WrittenTxn.WaitUntilDone(txn.String())
         db.lm.RLock(key)
     }
 }
