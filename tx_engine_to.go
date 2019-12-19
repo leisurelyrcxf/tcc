@@ -186,7 +186,7 @@ func (te *TxEngineTO) committer(db *DB) {
                 glog.Warningf(msg)
             }
         }
-        glog.Infof("txn(%s) succeeded", txn.String())
+        glog.V(5).Infof("txn(%s) succeeded", txn.String())
         txn.Done(TxStatusSucceeded)
         // Mark this version visible, this is an atomic commit.
         db.AddVersion(ts)
@@ -228,7 +228,7 @@ func (te *TxEngineTO) rollback(tx *Txn, reason error) {
     if reason.(*TxnError).IsRetryable() {
         retryLaterStr = ", retry later"
     }
-    glog.Infof("rollback txn(%s) due to error '%s'%s", tx.String(), reason.Error(), retryLaterStr)
+    glog.V(10).Infof("rollback txn(%s) due to error '%s'%s", tx.String(), reason.Error(), retryLaterStr)
     for _, key := range tx.CollectKeys() {
         te.removeReadTxForKey(key, tx)
         te.removeWriteTxForKey(key, tx)
@@ -272,7 +272,7 @@ func (te *TxEngineTO) executeIncrOp(db *DB, txn *Txn, op Op) error {
 }
 
 func (te *TxEngineTO) get(db *DB, txn *Txn, key string) (float64, error) {
-    glog.Infof("txn(%s) want to get key '%s'", txn.String(), key)
+    glog.V(10).Infof("txn(%s) want to get key '%s'", txn.String(), key)
 
     txn.CheckFirstOp(db.ts)
     // ts won't change because only this thread can modify it's value.
@@ -308,7 +308,7 @@ func (te *TxEngineTO) get(db *DB, txn *Txn, key string) (float64, error) {
             //writtenTxn.WaitUntilDone(txn)
         }
         te.putReadTxForKey(key, txn, nil)
-        glog.Infof("txn(%s) got value %f for key '%s'", txn.String(), vv.Value, key)
+        glog.V(10).Infof("txn(%s) got value %f for key '%s'", txn.String(), vv.Value, key)
         return vv.Value, nil
     }
 
@@ -386,7 +386,7 @@ func (te *TxEngineTO) get(db *DB, txn *Txn, key string) (float64, error) {
 }
 
 func (te *TxEngineTO) set(db *DB, txn *Txn, key string, val float64) (err error) {
-    glog.Infof("txn(%s) want to set key '%s' to value %f", txn.String(), key, val)
+    glog.V(10).Infof("txn(%s) want to set key '%s' to value %f", txn.String(), key, val)
 
     txn.CheckFirstOp(db.ts)
     ts := txn.GetTimestamp()
@@ -400,7 +400,7 @@ func (te *TxEngineTO) set(db *DB, txn *Txn, key string, val float64) (err error)
         }
         te.putWriteTxForKey(key, txn)
         txn.AddCommitData(key, val)
-        glog.Infof("txn(%s) succeeded in setting key '%s' to value %f", txn.String(), key, val)
+        glog.V(10).Infof("txn(%s) succeeded in setting key '%s' to value %f", txn.String(), key, val)
         return nil
     }
 
