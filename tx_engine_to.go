@@ -6,11 +6,46 @@ import (
     "sync"
     "tcc/assert"
     "tcc/data_struct"
+    "tcc/expr"
     "time"
 )
 
 var txnErrConflict = NewTxnError(fmt.Errorf("txn conflict"), true)
 var txnErrStaleWrite = NewTxnError(fmt.Errorf("stale write"), true)
+
+type TxEngineExecutorTO struct {
+    te *TxEngineTO
+    db *DB
+}
+
+func NewTxEngineExecutorTO(te *TxEngineTO, db* DB) *TxEngineExecutorTO {
+    return &TxEngineExecutorTO{
+        te:  te,
+        db:  db,
+    }
+}
+
+func (e *TxEngineExecutorTO) Get(key string, ctx expr.Context) (float64, error) {
+    tx := ctx.(*Txn)
+    if val, ok := tx.ctx[key]; ok {
+        glog.V(10).Infof("Get cached value %f for key '%s'", val, key)
+        return val, nil
+    }
+    val, err := e.te.get(e.db, tx, key)
+    if err == nil {
+        tx.ctx[key] = val
+        glog.V(10).Infof("Get value %f for key '%s'", val, key)
+    }
+    return val, err
+}
+
+func (e *TxEngineExecutorTO) Set(key string, val float64, ctx expr.Context) error {
+    tx := ctx.(*Txn)
+    delete(tx.ctx, key)
+    err := e.te.set(tx, key, val, e.db.ts)
+    glog.V(10).Infof("Set value %f for key '%s'", val, key)
+    return err
+}
 
 type TxEngineTO struct {
     threadNum            int
@@ -20,10 +55,11 @@ type TxEngineTO struct {
     txns                 chan *Txn
     errs                 chan *TxnError
     postCommitListeners  []func(*Txn)
+    e                    *TxEngineExecutorTO
 }
 
-func NewTxEngineTO(threadNum int, lm *LockManager) *TxEngineTO {
-    return &TxEngineTO{
+func NewTxEngineTO(db *DB, threadNum int, lm *LockManager) *TxEngineTO {
+    te := &TxEngineTO{
         threadNum:      threadNum,
         mw:             data_struct.NewConcurrentMap(1024),
         mr:             data_struct.NewConcurrentMap(1024),
@@ -31,6 +67,8 @@ func NewTxEngineTO(threadNum int, lm *LockManager) *TxEngineTO {
         txns:           make(chan *Txn, threadNum),
         errs:           make(chan *TxnError, threadNum * 100),
     }
+    te.e = NewTxEngineExecutorTO(te, db)
+    return te
 }
 
 func getMaxTxForKey(key string, m *data_struct.ConcurrentMap) *Txn {
@@ -202,6 +240,10 @@ func (te *TxEngineTO) executeOp(db *DB, txn *Txn, op Op) error {
     }
     if op.typ == WriteDirect {
         return te.set(txn, op.key, op.operatorNum, db.ts)
+    }
+    if op.typ == Procedure {
+        _, err := op.expr.Eval(te.e, txn)
+        return err
     }
     panic("not implemented")
 }

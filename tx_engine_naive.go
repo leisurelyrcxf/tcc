@@ -17,13 +17,14 @@ func NewTxEngineBasicExecutor(db *DB) *TxEngineBasicExecutor {
 }
 
 func (e *TxEngineBasicExecutor) Get(key string, ctx expr.Context) (float64, error) {
-    if val, ok := ctx[key]; ok {
+    tx := ctx.(*Txn)
+    if val, ok := tx.ctx[key]; ok {
         glog.V(10).Infof("Get cached value %f for key '%s'", val, key)
         return val, nil
     }
     val, err := e.db.Get(key)
     if err == nil {
-        ctx[key] = val
+        tx.ctx[key] = val
         glog.V(10).Infof("Get value %f for key '%s'", val, key)
     }
     return val, err
@@ -31,7 +32,7 @@ func (e *TxEngineBasicExecutor) Get(key string, ctx expr.Context) (float64, erro
 
 func (e *TxEngineBasicExecutor) Set(key string, val float64, ctx expr.Context) error {
     e.db.SetUnsafe(key, val, 0, TxNaN)
-    ctx[key] = val
+    ctx.(*Txn).ctx[key] = val
     glog.V(10).Infof("Set value %f for key '%s'", val, key)
     return nil
 }
@@ -74,7 +75,7 @@ func (te *TxEngineNaive) executeOp(db* DB, tx *Txn, op Op) error {
         return nil
     }
     if op.typ == Procedure {
-        _, err := op.expr.Eval(te.e, tx.ctx)
+        _, err := op.expr.Eval(te.e, tx)
         return err
     }
     panic("not implemented")

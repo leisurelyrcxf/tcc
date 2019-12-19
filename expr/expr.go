@@ -6,7 +6,7 @@ import (
     "reflect"
 )
 
-type Context map[string]float64
+type Context interface {}
 
 type Executor interface {
     Get(key string, ctx Context) (float64, error)

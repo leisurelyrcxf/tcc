@@ -75,6 +75,8 @@ func (s TxStatus) HasError() bool {
 
 var Counter = sync2.NewAtomicInt64(0)
 
+type Context map[string]float64
+
 type Txn struct {
     // Readonly fields
     ID   int64
@@ -96,7 +98,7 @@ type Txn struct {
     next         *Txn
     prev         *Txn
 
-    ctx          expr.Context
+    ctx          Context
 }
 
 const TxIDNaN = -1

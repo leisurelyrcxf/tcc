@@ -99,7 +99,7 @@ func (te *TxEngineC2PL) executeOp(db* DB, tx *Txn, op Op) error {
         return nil
     }
     if op.typ == Procedure {
-        _, err := op.expr.Eval(te.e, tx.ctx)
+        _, err := op.expr.Eval(te.e, tx)
         return err
     }
     panic("not implemented")
