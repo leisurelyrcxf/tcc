@@ -1,9 +1,43 @@
 package tcc
 
-import "fmt"
+import (
+    "fmt"
+    "tcc/expr"
+)
+
+type TxEngineNaiveExecutor struct {
+    db *DB
+    ctx expr.Context
+}
+
+func NewTxEngineNaiveExecutor(db *DB) *TxEngineNaiveExecutor {
+    return &TxEngineNaiveExecutor{
+        db:  db,
+        ctx: nil,
+    }
+}
+
+func (e *TxEngineNaiveExecutor) Get(key string) (float64, error) {
+    return e.db.Get(key)
+}
+
+func (e *TxEngineNaiveExecutor) Set(key string, val float64) error {
+    e.db.SetUnsafe(key, val, 0, TxNaN)
+    return nil
+}
+
+func (e *TxEngineNaiveExecutor) GetContext() expr.Context {
+    return e.ctx
+}
 
 type TxEngineNaive struct {
+    e *TxEngineNaiveExecutor
+}
 
+func NewTxEngineNaive(db *DB) *TxEngineNaive {
+    return &TxEngineNaive{
+        e: NewTxEngineNaiveExecutor(db),
+    }
 }
 
 func (te *TxEngineNaive) ExecuteTxns(db* DB, txns []*Txn) error {
@@ -16,6 +50,7 @@ func (te *TxEngineNaive) ExecuteTxns(db* DB, txns []*Txn) error {
 }
 
 func (te *TxEngineNaive) executeSingleTx(db* DB, tx *Txn) error {
+    te.e.ctx = tx.ctx
     tx.Start(db.ts.FetchTimestamp())
     for _, op := range tx.Ops {
         if err := te.executeOp(db, tx, op); err != nil {
@@ -32,6 +67,10 @@ func (te *TxEngineNaive) executeOp(db* DB, tx *Txn, op Op) error {
     if op.typ == WriteDirect {
         db.SetUnsafe(op.key, op.operatorNum, 0, tx)
         return nil
+    }
+    if op.typ == Procedure {
+        _, err := op.expr.Eval(te.e)
+        return err
     }
     panic("not implemented")
 }

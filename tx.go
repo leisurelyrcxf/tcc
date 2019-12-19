@@ -5,6 +5,7 @@ import (
     "github.com/golang/glog"
     "sync"
     "tcc/assert"
+    "tcc/expr"
     "tcc/sync2"
 )
 
@@ -15,6 +16,7 @@ const (
     IncrAdd
     IncrMinus
     WriteDirect
+    Procedure
 )
 
 // Soiyez prudent
@@ -25,9 +27,10 @@ func (ot OpType) IsIncr() bool {
 }
 
 type Op struct {
-    key string
     typ OpType
+    key string
     operatorNum float64
+    expr expr.Expr
 }
 
 type TxStatus int
@@ -90,6 +93,8 @@ type Txn struct {
 
     next         *Txn
     prev         *Txn
+
+    ctx          expr.Context
 }
 
 const TxIDNaN = -1
@@ -105,6 +110,8 @@ var TxNaN = &Txn{
     status:       sync2.NewAtomicInt32(int32(TxStatusFailed)),
 
     firstOpMet:   true,
+
+    ctx:          make(map[string]float64),
 }
 
 func NewTx(ops []Op) *Txn {
@@ -119,6 +126,7 @@ func NewTx(ops []Op) *Txn {
         status:       sync2.NewAtomicInt32(int32(TxStatusInitialized)),
 
         firstOpMet:   false,
+        ctx:          make(map[string]float64),
     }
     txn.cond = sync.Cond{
         L: &txn.mutex,
@@ -138,6 +146,7 @@ func (tx *Txn) Clone() *Txn {
         status:       sync2.NewAtomicInt32(int32(TxStatusInitialized)),
 
         firstOpMet:   false,
+        ctx:          make(map[string]float64),
     }
     newTxn.cond = sync.Cond{
         L: &newTxn.mutex,
@@ -249,6 +258,8 @@ func (tx *Txn) ResetForTestOnly() {
 
     tx.next = nil
     tx.prev = nil
+
+    tx.ctx = make(map[string]float64)
 
     tx.mutex.Unlock()
 
