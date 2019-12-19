@@ -38,9 +38,9 @@ func SerializeTxns(txns []*Txn) string {
     bytes := make([]byte, 0, 100)
     for i, txn := range txns {
         if i >= 1 {
-            bytes = append(bytes, fmt.Sprintf(", %d", txn.TxId)...)
+            bytes = append(bytes, fmt.Sprintf(", %d", txn.ID)...)
         } else {
-            bytes = append(bytes, fmt.Sprintf("%d", txn.TxId)...)
+            bytes = append(bytes, fmt.Sprintf("%d", txn.ID)...)
         }
     }
     return string(bytes)

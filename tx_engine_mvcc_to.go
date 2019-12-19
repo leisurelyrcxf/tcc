@@ -3,7 +3,6 @@ package tcc
 import (
     "fmt"
     "github.com/golang/glog"
-    "math"
     "sync"
     "tcc/assert"
     "tcc/data_struct"
@@ -37,14 +36,14 @@ func compactKey(key string, version int64) string {
 func getMaxTxForKeyAndVersion(key string, version int64, m *data_struct.ConcurrentMap) *Txn {
     newKey := compactKey(key, version)
     if tmObj, ok := m.Get(newKey); !ok {
-        return emptyTx
+        return TxNaN
     } else {
         tm := tmObj.(*data_struct.ConcurrentTreeMap)
         maxKey, _ := tm.MaxIf(func(key interface{}) bool {
             return !key.(*Txn).GetStatus().HasError()
         })
         if maxKey == nil {
-            return emptyTx
+            return TxNaN
         }
         return maxKey.(*Txn)
     }
@@ -209,7 +208,7 @@ func (te *TxEngineMVCCTO) executeOp(db *DB, txn *Txn, op Op) error {
 }
 
 func (te *TxEngineMVCCTO) executeIncrOp(db *DB, txn *Txn, op Op) error {
-    val, err := te.get(db, txn, op.key, true)
+    val, err := te.get(db, txn, op.key)
     if err != nil {
         return err
     }
@@ -226,7 +225,7 @@ func (te *TxEngineMVCCTO) executeIncrOp(db *DB, txn *Txn, op Op) error {
     return te.set(db, txn, op.key, val)
 }
 
-func (te *TxEngineMVCCTO) get(db *DB, txn *Txn, key string, waitIfDirty bool) (float64, error) {
+func (te *TxEngineMVCCTO) get(db *DB, txn *Txn, key string) (float64, error) {
     txn.CheckFirstOp(db.ts)
     ts := txn.GetTimestamp()
     glog.V(10).Infof("txn(%s) want to get key '%s'", txn.String(), key)
@@ -244,18 +243,7 @@ func (te *TxEngineMVCCTO) get(db *DB, txn *Txn, key string, waitIfDirty bool) (f
         assert.Must(dbValWrittenTxn.GetTimestamp() == dbVal.Version)
         stats := dbValWrittenTxn.GetStatus()
 
-        if stats.HasError() {
-            continue
-        }
-
-        if !waitIfDirty {
-            te.putReadTxForKeyAndVersion(key, dbVal.Version, txn, db.lm)
-            txn.AddReadVersion(key, dbVal.Version)
-            glog.V(10).Infof("txn(%s) got value(%f, %d) for key '%s'", txn.String(), math.NaN(), dbVal.Version, key)
-            return math.NaN(), nil
-        }
-
-        if dbValWrittenTxn == emptyTx || stats.Succeeded() {
+        if dbValWrittenTxn == TxNaN || stats.Succeeded() {
             te.putReadTxForKeyAndVersion(key, dbVal.Version, txn, db.lm)
             txn.AddReadVersion(key, dbVal.Version)
             glog.V(10).Infof("txn(%s) got value(%f, %d) for key '%s'", txn.String(), dbVal.Value, dbVal.Version, key)
@@ -280,7 +268,7 @@ func (te *TxEngineMVCCTO) set(db *DB, txn *Txn, key string, val float64) error {
 
     readVersion, ok := txn.readVersions[key]
     if !ok {
-        _, err := te.get(db, txn, key, true)
+        _, err := te.get(db, txn, key)
         if err != nil {
             return err
         }

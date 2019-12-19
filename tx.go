@@ -62,7 +62,7 @@ func (s TxStatus) Succeeded() bool {
 }
 
 func (s TxStatus) Done() bool {
-    return s == TxStatusSucceeded || s == TxStatusFailed || s == TxStatusFailedRetryable
+    return s.Succeeded() || s.HasError()
 }
 
 func (s TxStatus) HasError() bool {
@@ -73,8 +73,8 @@ var Counter = sync2.NewAtomicInt64(0)
 
 type Txn struct {
     // Readonly fields
-    TxId         int64
-    Ops          []Op
+    ID  int64
+    Ops []Op
 
     // Changeable fields.
     commitData   map[string]float64
@@ -89,12 +89,25 @@ type Txn struct {
     cond         sync.Cond
 }
 
-var emptyTx = &Txn{}
+const TxIDNaN = -1
+
+var TxNaN = &Txn{
+    ID:           TxIDNaN,
+    Ops:          make([]Op, 0, 0),
+
+    commitData:   make(map[string]float64),
+    readVersions: make(map[string]int64),
+    timestamp:    sync2.NewAtomicInt64(0),
+
+    status:       sync2.NewAtomicInt32(int32(TxStatusFailed)),
+
+    firstOpMet:   true,
+}
 
 func NewTx(ops []Op) *Txn {
     txn := &Txn{
-        TxId:         Counter.Add(1),
-        Ops:          ops,
+        ID:  Counter.Add(1),
+        Ops: ops,
 
         commitData:   make(map[string]float64),
         readVersions: make(map[string]int64),
@@ -112,8 +125,8 @@ func NewTx(ops []Op) *Txn {
 
 func (tx *Txn) Clone() *Txn {
     newTxn := &Txn{
-        TxId:         tx.TxId,
-        Ops:          tx.Ops,
+        ID:  tx.ID,
+        Ops: tx.Ops,
 
         commitData:   make(map[string]float64),
         readVersions: make(map[string]int64),
@@ -148,7 +161,7 @@ func (tx *Txn) CollectKeys() []string {
 }
 
 func (tx *Txn) String() string {
-    return fmt.Sprintf("%d, %d", tx.TxId, tx.GetTimestamp())
+    return fmt.Sprintf("%d, %d", tx.ID, tx.GetTimestamp())
 }
 
 func (tx *Txn) GetStatus() TxStatus {
@@ -311,7 +324,7 @@ func (ts TxnSliceSortByTxID) Len() int {
 }
 
 func (ts TxnSliceSortByTxID) Less(i, j int) bool {
-    return ts[i].TxId < ts[j].TxId
+    return ts[i].ID < ts[j].ID
 }
 
 func (ts TxnSliceSortByTxID) Swap(i, j int) {

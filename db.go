@@ -57,8 +57,8 @@ func (vvs DBVersionedValues) Get(version int64) (DBValue, error) {
     return DBValue{}, VersionNotExist
 }
 
-func (vvs DBVersionedValues) Put(version int64, val float64, writtenTxn *Txn) {
-    vvs.ConcurrentTreeMap.Put(version, NewDBValue(val, writtenTxn))
+func (vvs DBVersionedValues) Put(version int64, dbValue DBValue) {
+    vvs.ConcurrentTreeMap.Put(version, dbValue)
 }
 
 func (vvs DBVersionedValues) Max() (DBVersionedValue, error) {
@@ -142,7 +142,6 @@ func (db *DB) GetDBValue(key string) (DBVersionedValue, error) {
     return DBVersionedValue{}, KeyNotExist
 }
 
-// Non thread-safe
 func (db *DB) Get(key string) (float64, error) {
     if val, ok := db.values.Get(key); ok {
         if !db.mvccEnabled {
@@ -181,7 +180,7 @@ func (db *DB) mustGetTreeMapValue(key string, holdsWriteLock bool) DBVersionedVa
 
 func (db *DB) SetMVCC(key string, val float64, writtenTxn *Txn, holdsWriteLock bool) {
     vvs := db.mustGetTreeMapValue(key, holdsWriteLock)
-    vvs.Put(writtenTxn.GetTimestamp(), val, writtenTxn)
+    vvs.Put(writtenTxn.GetTimestamp(), NewDBValue(val, writtenTxn))
 }
 
 func (db *DB) MustRemoveVersion(key string, version int64) {
@@ -217,7 +216,7 @@ func (db *DB) SetUnsafe(key string, val float64, version int64, writtenTxn *Txn)
         db.values.Set(key, NewDBVersionedValue(val, writtenTxn, version))
         return
     }
-    db.SetMVCC(key, val, emptyTx, false)
+    db.SetMVCC(key, val, TxNaN, false)
 }
 
 func (db *DB) Snapshot() map[string]float64 {

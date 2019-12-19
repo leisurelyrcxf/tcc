@@ -35,14 +35,14 @@ func NewTxEngineTO(threadNum int, lm *LockManager) *TxEngineTO {
 
 func getMaxTxForKey(key string, m *data_struct.ConcurrentMap) *Txn {
     if tmObj, ok := m.Get(key); !ok {
-        return emptyTx
+        return TxNaN
     } else {
         tm := tmObj.(*data_struct.ConcurrentTreeMap)
         maxKey, _ := tm.MaxIf(func(key interface{}) bool {
             return !key.(*Txn).GetStatus().HasError()
         })
         if maxKey == nil {
-            return emptyTx
+            return TxNaN
         }
         return maxKey.(*Txn)
     }
@@ -236,9 +236,9 @@ func (te *TxEngineTO) get(db *DB, txn *Txn, key string) (float64, error) {
         maxWriteTxn := te.getMaxWriteTxForKey(key)
         // maxWriteTxnTs is only a snapshot may change any time later.
         maxWriteTxnTs := maxWriteTxn.GetTimestamp()
-        if maxWriteTxn == emptyTx || maxWriteTxnTs == ts {
+        if maxWriteTxn == TxNaN || maxWriteTxnTs == ts {
             // Empty or is self, always safe.
-            assert.Must(maxWriteTxn == emptyTx || maxWriteTxn == txn)
+            assert.Must(maxWriteTxn == TxNaN || maxWriteTxn == txn)
             break
         }
 

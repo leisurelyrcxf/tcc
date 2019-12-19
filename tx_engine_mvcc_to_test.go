@@ -61,7 +61,7 @@ func TestTxEngineMVCCTO(t *testing.T) {
     }
 
     var totalTime time.Duration
-    round := 10000
+    round := 100000
     for i := 0; i < round; i++ {
         glog.V(10).Infof("\nRound: %d\n", i)
         duration, err := executeOneRoundMVCCTO(db, txns, initDBFunc)
