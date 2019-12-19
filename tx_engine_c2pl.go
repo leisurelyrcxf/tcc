@@ -10,6 +10,7 @@ type TxEngineC2PL struct {
     threadNum int
     txns chan *Txn
     errs chan *TxnError
+    postCommitListeners []func(*Txn)
 }
 
 func NewTxEngineC2PL(threadNum int) *TxEngineC2PL {
@@ -18,6 +19,10 @@ func NewTxEngineC2PL(threadNum int) *TxEngineC2PL {
         txns: make(chan *Txn, threadNum),
         errs: make(chan *TxnError, threadNum),
     }
+}
+
+func (te *TxEngineC2PL) AddPostCommitListener(cb func(*Txn)) {
+    te.postCommitListeners = append(te.postCommitListeners, cb)
 }
 
 func (te *TxEngineC2PL) ExecuteTxns(db* DB, txns []*Txn) error {
@@ -75,6 +80,10 @@ func (te *TxEngineC2PL) executeSingleTx(db* DB, tx *Txn) error {
         if err := te.executeOp(db, tx, op); err != nil {
             return err
         }
+    }
+
+    for _, l := range te.postCommitListeners {
+        l(tx)
     }
     return nil
 }

@@ -95,7 +95,9 @@ func NewTx(ops []Op) *Txn {
     txn := &Txn{
         TxId:       Counter.Add(1),
         Ops:        ops,
+
         commitData: make(map[string]float64),
+        timestamp:  sync2.NewAtomicInt64(0),
 
         round: sync2.NewAtomicInt32(0),
         status: sync2.NewAtomicInt32(int32(TxStatusInitialized)),
@@ -106,6 +108,25 @@ func NewTx(ops []Op) *Txn {
         L: &txn.mutex,
     }
     return txn
+}
+
+func (tx *Txn) Clone() *Txn {
+    newTxn := &Txn{
+        TxId:       tx.TxId,
+        Ops:        tx.Ops,
+
+        commitData: make(map[string]float64),
+        timestamp:  sync2.NewAtomicInt64(0),
+
+        round:      sync2.NewAtomicInt32(0),
+        status:     sync2.NewAtomicInt32(int32(TxStatusInitialized)),
+
+        firstOpMet: false,
+    }
+    newTxn.cond = sync.Cond{
+        L: &newTxn.mutex,
+    }
+    return newTxn
 }
 
 func (tx *Txn) AddCommitData(key string, val float64) {
@@ -217,6 +238,8 @@ func (tx *Txn) Reset() {
 
     tx.round.Set(0)
     tx.SetStatusLocked(TxStatusInitialized)
+
+    tx.firstOpMet = false
 
     tx.mutex.Unlock()
 

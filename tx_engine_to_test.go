@@ -4,6 +4,7 @@ import (
     "fmt"
     "github.com/golang/glog"
     "sort"
+    "sync"
     "testing"
     "time"
 )
@@ -78,12 +79,23 @@ func executeOneRound(db *DB, txns []*Txn, initDBFunc func(*DB)) error {
         txn.Reset()
     }
 
-    if err := NewTxEngineTO(4, db.lm).ExecuteTxns(db, txns); err != nil {
+    newTxns := make([]*Txn, 0, len(txns))
+    var newTxnsMutex sync.Mutex
+    te := NewTxEngineTO(4, db.lm)
+    te.AddPostCommitListener(func(txn *Txn) {
+        newTxnsMutex.Lock()
+        newTxns = append(newTxns, txn)
+        newTxnsMutex.Unlock()
+    })
+    if err := te.ExecuteTxns(db, txns); err != nil {
         return err
+    }
+    if len(newTxns) != len(txns) {
+        return fmt.Errorf("not the same, expect %d, but met %d", len(txns), len(newTxns))
     }
     toResult := db.Snapshot()
 
-    if err := generateDatum(db, txns, initDBFunc); err != nil {
+    if err := generateDatum(db, newTxns, initDBFunc); err != nil {
         return err
     }
     datum := db.Snapshot()

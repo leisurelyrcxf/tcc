@@ -13,12 +13,13 @@ var txnErrConflict = NewTxnError(fmt.Errorf("txn conflict"), true)
 var txnErrStaleWrite = NewTxnError(fmt.Errorf("stale write"), true)
 
 type TxEngineTO struct {
-    threadNum      int
-    mw             data_struct.ConcurrentMap
-    mr             data_struct.ConcurrentMap
-    lm             *LockManager
-    txns           chan *Txn
-    errs           chan *TxnError
+    threadNum            int
+    mw                   data_struct.ConcurrentMap
+    mr                   data_struct.ConcurrentMap
+    lm                   *LockManager
+    txns                 chan *Txn
+    errs                 chan *TxnError
+    postCommitListeners  []func(*Txn)
 }
 
 func NewTxEngineTO(threadNum int, lm *LockManager) *TxEngineTO {
@@ -112,6 +113,10 @@ func (te *TxEngineTO) removeWriteTxForKey(key string, tx *Txn) {
     removeTxForKey(key, tx, &te.mw)
 }
 
+func (te *TxEngineTO) AddPostCommitListener(cb func(*Txn)) {
+    te.postCommitListeners = append(te.postCommitListeners, cb)
+}
+
 func (te *TxEngineTO) ExecuteTxns(db *DB, txns []*Txn) error {
     go func() {
         for _, txn := range txns {
@@ -155,6 +160,7 @@ func (te *TxEngineTO) executeSingleTx(db *DB, tx *Txn) error {
     for {
         err := te._executeSingleTx(db, tx)
         if err != nil && err.(*TxnError).IsRetryable() {
+            tx = tx.Clone()
             continue
         }
         return err
@@ -168,6 +174,8 @@ func (te *TxEngineTO) _executeSingleTx(db *DB, txn *Txn) (err error) {
     defer func() {
         if err != nil {
             te.rollback(txn, err)
+        } else {
+            te.commit(db, txn)
         }
     }()
 
@@ -176,16 +184,17 @@ func (te *TxEngineTO) _executeSingleTx(db *DB, txn *Txn) (err error) {
             return
         }
     }
-
-    te.commit(db, txn)
     return
 }
 
 func (te *TxEngineTO) commit(db *DB, tx *Txn) {
     for key, val := range tx.GetCommitData() {
-        db.SetSafe(key, val, tx)
+        _ = db.SetSafe(key, val, tx)
     }
     tx.Done(TxStatusSucceeded)
+    for _, l := range te.postCommitListeners {
+        l(tx)
+    }
 }
 
 func (te *TxEngineTO) rollback(tx *Txn, reason error) {
