@@ -7,7 +7,7 @@ import (
     "testing"
 )
 
-func TestNewTxEngineTO(t *testing.T) {
+func TestTxEngineTimestampOrdering(t *testing.T) {
     db := NewDB()
     txns := []*Txn{NewTx(
         []Op {{
@@ -58,7 +58,7 @@ func TestNewTxEngineTO(t *testing.T) {
 
     round := 100000
     for i := 0; i < round; i++ {
-        glog.Infof("\nRound: %d\n", i)
+        glog.V(10).Infof("\nRound: %d\n", i)
         err := executeOneRound(db, txns, initDBFunc)
         if err != nil {
             t.Errorf(err.Error())
