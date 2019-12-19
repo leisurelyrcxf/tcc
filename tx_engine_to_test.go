@@ -76,7 +76,7 @@ func TestTxEngineTimestampOrdering(t *testing.T) {
 func executeOneRound(db *DB, txns []*Txn, initDBFunc func(*DB)) error {
     initDBFunc(db)
     for _, txn := range txns {
-        txn.Reset()
+        txn.ResetForTestOnly()
     }
 
     newTxns := make([]*Txn, 0, len(txns))
@@ -108,7 +108,9 @@ func executeOneRound(db *DB, txns []*Txn, initDBFunc func(*DB)) error {
 func generateDatum(db *DB, txns []*Txn, initDBFunc func(*DB)) error {
     sort.Sort(TxnSliceSortByTimestamp(txns))
     defer sort.Sort(TxnSliceSortByTxID(txns))
-
+    for _, txn := range txns {
+        txn.ResetForTestOnly()
+    }
     initDBFunc(db)
     var ten TxEngineNaive
     if err := ten.ExecuteTxns(db, txns); err != nil {

@@ -251,13 +251,10 @@ func (te *TxEngineTO) get(db *DB, txn *Txn, key string) (float64, error) {
     glog.V(10).Infof("txn(%s) want to get key '%s'", txn.String(), key)
 
     txn.CheckFirstOp(db.ts)
-    // ts won't change because only this thread can modify it's value.
     ts := txn.GetTimestamp()
 
     for {
         maxWriteTxn := te.getMaxWriteTxForKey(key)
-        // round is also a snapshot
-        round := maxWriteTxn.GetRound()
         // maxWriteTxnTs is only a snapshot may change any time later.
         maxWriteTxnTs := maxWriteTxn.GetTimestamp()
         if maxWriteTxn == emptyTx || maxWriteTxnTs == ts {
@@ -298,14 +295,8 @@ func (te *TxEngineTO) get(db *DB, txn *Txn, key string) (float64, error) {
             continue
         }
 
-        // Wait until depending txn finishes.
-        if maxWriteTxn.GetRound() != round  ||
-            maxWriteTxn.GetStatus().Done() ||
-            maxWriteTxn.GetTimestamp() != maxWriteTxnTs {
-           continue
-        }
         db.lm.RUnlock(key)
-        maxWriteTxn.WaitUntilDoneOrRestarted(txn, round)
+        maxWriteTxn.WaitUntilDone(txn)
         db.lm.RLock(key)
     }
 

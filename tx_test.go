@@ -68,7 +68,7 @@ func TxTest(t *testing.T, db *DB, txns []*Txn, initDBFunc func(*DB),
     for i := 0; i < round; i++ {
         initDBFunc(db)
         for _, txn := range txns {
-            txn.Reset()
+            txn.ResetForTestOnly()
         }
 
         glog.V(10).Infof("\nRound: %d\n", i)

@@ -80,7 +80,6 @@ type Txn struct {
     commitData map[string]float64
     timestamp  sync2.AtomicInt64
 
-    round    sync2.AtomicInt32
     status sync2.AtomicInt32
 
     firstOpMet bool
@@ -99,7 +98,6 @@ func NewTx(ops []Op) *Txn {
         commitData: make(map[string]float64),
         timestamp:  sync2.NewAtomicInt64(0),
 
-        round: sync2.NewAtomicInt32(0),
         status: sync2.NewAtomicInt32(int32(TxStatusInitialized)),
 
         firstOpMet:  false,
@@ -118,7 +116,6 @@ func (tx *Txn) Clone() *Txn {
         commitData: make(map[string]float64),
         timestamp:  sync2.NewAtomicInt64(0),
 
-        round:      sync2.NewAtomicInt32(0),
         status:     sync2.NewAtomicInt32(int32(TxStatusInitialized)),
 
         firstOpMet: false,
@@ -154,6 +151,11 @@ func (tx *Txn) SetStatusLocked(status TxStatus) {
 }
 
 func (tx *Txn) Start(ts int64) {
+    assert.Must(tx.timestamp.Get() == 0)
+    assert.Must(len(tx.commitData) == 0)
+    assert.Must(tx.GetStatus() == TxStatusInitialized)
+    assert.Must(!tx.firstOpMet)
+
     tx.mutex.Lock()
 
     tx.timestamp.Set(ts)
@@ -162,7 +164,7 @@ func (tx *Txn) Start(ts int64) {
     tx.mutex.Unlock()
 
     tx.cond.Broadcast()
-    glog.V(10).Infof("Start txn(%s), status: '%s', round: %d", tx.String(), tx.GetStatus().String(), tx.round.Get())
+    glog.V(10).Infof("Start txn(%s), status: '%s'", tx.String(), tx.GetStatus().String())
 }
 
 func (tx *Txn) Done(status TxStatus) {
@@ -170,12 +172,11 @@ func (tx *Txn) Done(status TxStatus) {
 
     assert.Must(status.Done())
     tx.SetStatusLocked(status)
-    tx.IncrRound()
 
     tx.mutex.Unlock()
 
     tx.cond.Broadcast()
-    glog.V(10).Infof("Done txn(%s), status: '%s', new round: %d", tx.String(), status.String(), tx.round.Get())
+    glog.V(10).Infof("Done txn(%s), status: '%s'", tx.String(), status.String())
 }
 
 func (tx *Txn) GetTimestamp() int64 {
@@ -185,58 +186,31 @@ func (tx *Txn) GetTimestamp() int64 {
     return tx.timestamp.Get()
 }
 
-func (tx *Txn) GetRound() int32 {
-    return tx.round.Get()
-}
-
-func (tx *Txn) IncrRound() {
-    tx.round.Add(1)
-}
-
-func (tx *Txn) WaitUntilDoneOrRestarted(waiter *Txn, round int32) {
-    tx.mutex.Lock()
-
-    glog.V(5).Infof("txn(%s) wait for txn(%s)'s %dth round to finish", waiter.String(), tx.String(), round)
-    loopTimes := 0
-    for !tx.GetStatus().Done() && waiter.GetTimestamp() > tx.GetTimestamp()  {
-        if loopTimes > 0 {
-            glog.V(5).Infof("txn(%s) waited once txn(%s)'s %dth round successfully", waiter.String(), tx.String(), round)
-            glog.V(5).Infof("txn(%s) wait once for txn(%s)'s %dth round to finish", waiter.String(), tx.String(), round)
-        }
-        tx.cond.Wait()
-        loopTimes++
-    }
-    glog.V(5).Infof("txn(%s) waited txn(%s)'s %dth round successfully", waiter.String(), tx.String(), round)
-
-    tx.mutex.Unlock()
-}
-
 func (tx *Txn) WaitUntilDone(waiter *Txn) {
     tx.mutex.Lock()
 
-    glog.V(5).Infof("txn(%s) wait for txn(%s)'s to be done", waiter.String(), tx.String())
+    glog.V(5).Infof("txn(%s) wait for txn(%s) to finish", waiter.String(), tx.String())
     loopTimes := 0
     for !tx.GetStatus().Done()  {
         if loopTimes > 0 {
-            glog.V(5).Infof("txn(%s) wait for txn(%s) to be done", waiter.String(), tx.String())
+            glog.V(5).Infof("txn(%s) waited once txn(%s) successfully", waiter.String(), tx.String())
+            glog.V(5).Infof("txn(%s) wait once for txn(%s) to finish", waiter.String(), tx.String())
         }
         tx.cond.Wait()
-        glog.V(5).Infof("txn(%s) waited once txn(%s) done successfully", waiter.String(), tx.String())
         loopTimes++
     }
-    if loopTimes == 0 {
-        glog.V(5).Infof("txn(%s) waited txn(%s) done successfully", waiter.String(), tx.String())
-    }
+    glog.V(5).Infof("txn(%s) waited txn(%s) successfully", waiter.String(), tx.String())
+
     tx.mutex.Unlock()
 }
 
-func (tx *Txn) Reset() {
+// Only used in tests.
+func (tx *Txn) ResetForTestOnly() {
     tx.mutex.Lock()
 
     tx.ClearCommitData()
     tx.timestamp.Set(0)
 
-    tx.round.Set(0)
     tx.SetStatusLocked(TxStatusInitialized)
 
     tx.firstOpMet = false

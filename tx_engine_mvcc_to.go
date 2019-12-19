@@ -270,7 +270,7 @@ func (te *TxEngineMVCCTO) get(db *DB, txn *Txn, key string) (float64, error) {
             continue
         }
         db.lm.RUnlock(key)
-        dbVal.WrittenTxn.WaitUntilDoneOrRestarted(txn, dbVal.WrittenTxn.GetRound())
+        dbVal.WrittenTxn.WaitUntilDone(txn)
         db.lm.RLock(key)
     }
 }
