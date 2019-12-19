@@ -2,7 +2,9 @@
 
 package assert
 
-import "fmt"
+import (
+    "fmt"
+)
 
 func Must(b bool) {
     if b {

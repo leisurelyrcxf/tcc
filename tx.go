@@ -196,20 +196,23 @@ func (tx *Txn) GetTimestamp() int64 {
     return tx.timestamp.Get()
 }
 
-func (tx *Txn) WaitUntilDone(waiter string) {
+func (tx *Txn) WaitUntilDone(waiter *Txn) {
+    assert.Must(tx != waiter)
+    waiterDesc := waiter.String()
+
     tx.mutex.Lock()
 
-    glog.V(5).Infof("txn(%s) wait for txn(%s) to finish", waiter, tx.String())
+    glog.V(5).Infof("txn(%s) wait for txn(%s) to finish", waiterDesc, tx.String())
     loopTimes := 0
     for !tx.GetStatus().Done()  {
         if loopTimes > 0 {
-            glog.V(5).Infof("txn(%s) waited once txn(%s) successfully", waiter, tx.String())
-            glog.V(5).Infof("txn(%s) wait once for txn(%s) to finish", waiter, tx.String())
+            glog.V(5).Infof("txn(%s) waited once txn(%s) successfully", waiterDesc, tx.String())
+            glog.V(5).Infof("txn(%s) wait once for txn(%s) to finish", waiterDesc, tx.String())
         }
         tx.cond.Wait()
         loopTimes++
     }
-    glog.V(5).Infof("txn(%s) waited txn(%s) successfully", waiter, tx.String())
+    glog.V(5).Infof("txn(%s) waited txn(%s) successfully", waiterDesc, tx.String())
 
     tx.mutex.Unlock()
 }

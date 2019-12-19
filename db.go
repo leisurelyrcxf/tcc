@@ -3,6 +3,7 @@ package tcc
 import (
     "fmt"
     "github.com/golang/glog"
+    "math"
     "tcc/assert"
     "tcc/data_struct"
 )
@@ -58,6 +59,24 @@ func (vvs DBVersionedValues) Get(version int64) (DBValue, error) {
 
 func (vvs DBVersionedValues) Put(version int64, val float64, writtenTxn *Txn) {
     vvs.ConcurrentTreeMap.Put(version, NewDBValue(val, writtenTxn))
+}
+
+func (vvs DBVersionedValues) Max() (DBVersionedValue, error) {
+    // Key is revered sorted, thus min is actually max version..
+    key, dbVal := vvs.ConcurrentTreeMap.Min()
+    if key == nil {
+        return DBVersionedValue{}, VersionNotExist
+    }
+    return NewDBVersionedValueWithDBValue(dbVal.(DBValue), key.(int64)), nil
+}
+
+func (vvs DBVersionedValues) Min() (DBVersionedValue, error) {
+    // Key is revered sorted, thus max is the min version.
+    key, dbVal := vvs.ConcurrentTreeMap.Max()
+    if key == nil {
+        return DBVersionedValue{}, VersionNotExist
+    }
+    return NewDBVersionedValueWithDBValue(dbVal.(DBValue), key.(int64)), nil
 }
 
 func (vvs DBVersionedValues) FindMaxBelow(upperVersion int64) (DBVersionedValue, error) {
@@ -126,8 +145,16 @@ func (db *DB) GetDBValue(key string) (DBVersionedValue, error) {
 // Non thread-safe
 func (db *DB) Get(key string) (float64, error) {
     if val, ok := db.values.Get(key); ok {
-        vv := val.(DBVersionedValue)
-        return vv.Value, nil
+        if !db.mvccEnabled {
+            vv := val.(DBVersionedValue)
+            return vv.Value, nil
+        }
+        vvs := val.(DBVersionedValues)
+        dbVersionedValue, err := vvs.Max()
+        if err != nil {
+            return math.NaN(), err
+        }
+        return dbVersionedValue.Value, nil
     }
     return 0.0, KeyNotExist
 }
@@ -165,6 +192,12 @@ func (db *DB) MustRemoveVersion(key string, version int64) {
     vvs.Remove(version)
 }
 
+func (db *DB) MustClearVersions(key string) {
+    vvs, err := db.GetDBVersionedValues(key)
+    assert.MustNoError(err)
+    vvs.Clear()
+}
+
 func (db *DB) SetSafe(key string, val float64, writtenTxn *Txn) bool {
     assert.Must(!db.mvccEnabled)
     version := writtenTxn.GetTimestamp()
@@ -189,8 +222,19 @@ func (db *DB) SetUnsafe(key string, val float64, version int64, writtenTxn *Txn)
 
 func (db *DB) Snapshot() map[string]float64 {
     m := make(map[string]float64)
-    db.values.ForEachStrict(func(k string, vv interface{}) {
-        m[k] = vv.(DBVersionedValue).Value
-    })
+    if !db.mvccEnabled {
+        db.values.ForEachStrict(func(k string, vv interface{}) {
+            m[k] = vv.(DBVersionedValue).Value
+        })
+    } else {
+        db.values.ForEachStrict(func(k string, vvs interface{}) {
+            dbVersionedValue, err := vvs.(DBVersionedValues).Max()
+            if err != nil {
+                m[k] = math.NaN()
+                return
+            }
+            m[k] = dbVersionedValue.Value
+        })
+    }
     return m
 }

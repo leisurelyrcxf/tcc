@@ -47,6 +47,12 @@ func (ctm *ConcurrentTreeMap) Max() (key interface{}, value interface{}) {
     return ctm.tm.Max()
 }
 
+func (ctm *ConcurrentTreeMap) Min() (key interface{}, value interface{}) {
+    ctm.mutex.RLock()
+    defer ctm.mutex.RUnlock()
+    return ctm.tm.Min()
+}
+
 func (ctm *ConcurrentTreeMap) MaxIf(pred func (key interface{})bool) (key interface{}, value interface{}) {
     ctm.mutex.RLock()
     defer ctm.mutex.RUnlock()

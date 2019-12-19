@@ -6,7 +6,6 @@ import (
     "sync"
     "tcc/assert"
     "tcc/data_struct"
-    "time"
 )
 
 type TxEngineMVCCTO struct {
@@ -186,32 +185,32 @@ func (te *TxEngineMVCCTO) _executeSingleTx(db *DB, txn *Txn) (err error) {
     return
 }
 
-func (te *TxEngineMVCCTO) commit(db *DB, tx *Txn) {
-    tx.Done(TxStatusSucceeded)
+func (te *TxEngineMVCCTO) commit(db *DB, txn *Txn) {
+    txn.Done(TxStatusSucceeded)
 
     for _, l := range te.postCommitListeners {
-        l(tx)
+        l(txn)
     }
 }
 
-func (te *TxEngineMVCCTO) rollback(db *DB, tx *Txn, reason error) {
+func (te *TxEngineMVCCTO) rollback(db *DB, txn *Txn, reason error) {
     var retryLaterStr string
     if reason.(*TxnError).IsRetryable() {
         retryLaterStr = ", retry later"
     }
-    ts := tx.GetTimestamp()
-    for key, _ := range tx.GetCommitData() {
+    ts := txn.GetTimestamp()
+    for key, _ := range txn.GetCommitData() {
         db.MustRemoveVersion(key, ts)
     }
-    tx.ClearCommitData()
-    tx.ClearReadVersions()
-    glog.V(10).Infof("rollback txn(%s) due to error '%s'%s", tx.String(), reason.Error(), retryLaterStr)
+    txn.ClearCommitData()
+    txn.ClearReadVersions()
+    glog.V(10).Infof("rollback txn(%s) due to error '%s'%s", txn.String(), reason.Error(), retryLaterStr)
     if reason == txnErrStaleWrite {
-        tx.Done(TxStatusFailedRetryable)
+        txn.Done(TxStatusFailedRetryable)
     } else if reason == txnErrConflict {
-        tx.Done(TxStatusFailedRetryable)
+        txn.Done(TxStatusFailedRetryable)
     } else {
-        tx.Done(TxStatusFailed)
+        txn.Done(TxStatusFailed)
     }
 }
 
@@ -225,7 +224,7 @@ func (te *TxEngineMVCCTO) executeOp(db *DB, txn *Txn, op Op) error {
         if err != nil {
             return err
         }
-        return te.set(db, txn, op.key, op.operatorNum, db.ts)
+        return te.set(db, txn, op.key, op.operatorNum)
     }
     panic("not implemented")
 }
@@ -245,7 +244,7 @@ func (te *TxEngineMVCCTO) executeIncrOp(db *DB, txn *Txn, op Op) error {
     default:
         panic("unimplemented")
     }
-    return te.set(db, txn, op.key, val, db.ts)
+    return te.set(db, txn, op.key, val)
 }
 
 func (te *TxEngineMVCCTO) get(db *DB, txn *Txn, key string) (float64, error) {
@@ -268,6 +267,7 @@ func (te *TxEngineMVCCTO) get(db *DB, txn *Txn, key string) (float64, error) {
             // TODO remove this
             assert.Must(dbVal.WrittenTxn.GetTimestamp() == dbVal.Version)
             te.putReadTxForKey(key, dbVal.Version, txn, db.lm)
+            txn.AddReadVersion(key, dbVal.Version)
             glog.V(10).Infof("txn(%s) got value %f for key '%s'", txn.String(), dbVal.Value, key)
             return dbVal.Value, nil
         }
@@ -276,53 +276,29 @@ func (te *TxEngineMVCCTO) get(db *DB, txn *Txn, key string) (float64, error) {
             continue
         }
         db.lm.RUnlock(key)
-        dbValWrittenTxn.WaitUntilDone(txn.String())
+        dbValWrittenTxn.WaitUntilDone(txn)
         db.lm.RLock(key)
     }
 }
 
-func (te *TxEngineMVCCTO) set(db *DB, txn *Txn, key string, val float64, timeServ *TimeServer) error {
+func (te *TxEngineMVCCTO) set(db *DB, txn *Txn, key string, val float64) error {
     te.lm.Lock(key)
     defer te.lm.Unlock(key)
     glog.V(10).Infof("txn(%s) want to set key '%s' to value %f", txn.String(), key, val)
 
-    txn.CheckFirstOp(timeServ)
+    txn.CheckFirstOp(db.ts)
     ts := txn.GetTimestamp()
 
     // Write-read conflict
-    if ts < te.getMaxReadTxForKey(key, 0).GetTimestamp() {
+    readVersion, ok := txn.readVersions[key]
+    assert.Must(ok)
+    if ts < te.getMaxReadTxForKey(key, readVersion).GetTimestamp() {
         return txnErrConflict
     }
 
     // Write-write conflict
-    for {
-        maxWriteTxn := te.getMaxWriteTxForKey(key, 0)
-        if ts < maxWriteTxn.GetTimestamp() {
-            for i := 0; i < 8; i++ {
-                status := maxWriteTxn.GetStatus()
-                if status.Done() {
-                    if status.Succeeded() {
-                        // Apply Thomas's write rule.
-                        return nil
-                    }
-                    //assert.Must(status.HasError())
-                    break
-                }
-                time.Sleep(1 * time.Millisecond)
-            }
-            if maxWriteTxn.GetStatus().HasError() {
-                continue
-            }
-            // Since maxWriteTxn's status is not known, it could rollback later,
-            // ellipsis not safe here.
-            return txnErrStaleWrite
-        } else {
-            break
-        }
-    }
-
     txn.AddCommitData(key, val)
-    te.putWriteTxForKey(key, 0, txn)
+    db.SetMVCC(key, val, txn, true)
     glog.V(10).Infof("txn(%s) succeeded in setting key '%s' to value %f", txn.String(), key, val)
     return nil
 }

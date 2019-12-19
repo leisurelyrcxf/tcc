@@ -51,6 +51,9 @@ func TestTxEngineMVCCTO(t *testing.T) {
     }
 
     initDBFunc := func (db *DB) {
+        db.values.ForEachStrict(func(_ string, vv interface{}) {
+            vv.(DBVersionedValues).Clear()
+        })
         db.SetUnsafe("a", 0, 0, nil)
         db.SetUnsafe("b", 1, 0, nil)
         db.ts.c.Set(0)

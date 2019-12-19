@@ -292,7 +292,7 @@ func (te *TxEngineTO) get(db *DB, txn *Txn, key string) (float64, error) {
         }
 
         db.lm.RUnlock(key)
-        maxWriteTxn.WaitUntilDone(txn.String())
+        maxWriteTxn.WaitUntilDone(txn)
         db.lm.RLock(key)
     }
 
