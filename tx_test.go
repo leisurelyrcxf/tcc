@@ -23,7 +23,7 @@ func GetAllPossibleSerializableResult(db *DB, txns []*Txn, initDBFunc func(db *D
     initDBFunc(db)
 
     var allPossibleExecuteResults []map[string]float64
-    var ten TxEngineNaive
+    ten := NewTxEngineNaive(db)
     ch := Permutate(txns)
     for oneOrderTxns := range ch {
         if oneOrderTxns == nil {

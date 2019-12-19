@@ -1,6 +1,9 @@
 package tcc
 
-import "testing"
+import (
+    "tcc/expr"
+    "testing"
+)
 
 func TestNewTxEngineC2PL(t *testing.T) {
     txns := []*Txn{NewTx(
@@ -51,7 +54,138 @@ func TestNewTxEngineC2PL(t *testing.T) {
 
     db := NewDB()
     TxTest(t, db, txns, initDBFunc, func() TxEngine {
-        return NewTxEngineC2PL(4)
+        return NewTxEngineC2PL(db, 4)
+    }, 10000)
+}
+
+func Test2PCL_Procedure(t *testing.T) {
+    txns := []*Txn{NewTx(
+        []Op {{
+            typ: Procedure,
+            expr: &expr.IfExpr{
+                Pred: &expr.BinaryExpr{
+                    Op:    expr.GTLE,
+                    Left:  &expr.BinaryExpr{
+                        Op:    expr.Add,
+                        Left:  &expr.FuncExpr{
+                            Name:       expr.Get,
+                            Parameters: []expr.Expr{&expr.ConstExpr{
+                                Obj: "a",
+                                Typ: expr.String,
+                            }},
+                        },
+                        Right: &expr.FuncExpr{
+                            Name:       expr.Get,
+                            Parameters: []expr.Expr{&expr.ConstExpr{
+                                Obj: "b",
+                                Typ: expr.String,
+                            }},
+                        },
+                    },
+                    Right: &expr.ConstExpr{
+                        Obj: 5,
+                        Typ: expr.Float64,
+                    },
+                },
+                Then: &expr.FuncExpr{
+                    Name:       expr.Set,
+                    Parameters: []expr.Expr{
+                        &expr.ConstExpr{
+                            Obj: "a",
+                            Typ: expr.String,
+                        },
+                        &expr.BinaryExpr{
+                            Op:    expr.Minus,
+                            Left:  &expr.FuncExpr{
+                                Name:       expr.Get,
+                                Parameters: []expr.Expr{&expr.ConstExpr{
+                                    Obj: "a",
+                                    Typ: expr.String,
+                                }},
+                            },
+                            Right: &expr.ConstExpr{
+                                Obj: 5,
+                                Typ: expr.Float64,
+                            },
+                        },
+                    },
+                },
+                Else: nil,
+            },
+        }},
+    ), NewTx(
+        []Op {{
+            typ: Procedure,
+            expr: &expr.IfExpr{
+                Pred: &expr.BinaryExpr{
+                    Op:    expr.GTLE,
+                    Left:  &expr.BinaryExpr{
+                        Op:    expr.Add,
+                        Left:  &expr.FuncExpr{
+                            Name:       expr.Get,
+                            Parameters: []expr.Expr{&expr.ConstExpr{
+                                Obj: "a",
+                                Typ: expr.String,
+                            }},
+                        },
+                        Right: &expr.FuncExpr{
+                            Name:       expr.Get,
+                            Parameters: []expr.Expr{&expr.ConstExpr{
+                                Obj: "b",
+                                Typ: expr.String,
+                            }},
+                        },
+                    },
+                    Right: &expr.ConstExpr{
+                        Obj: 5,
+                        Typ: expr.Float64,
+                    },
+                },
+                Then: &expr.FuncExpr{
+                    Name:       expr.Set,
+                    Parameters: []expr.Expr{
+                        &expr.ConstExpr{
+                            Obj: "b",
+                            Typ: expr.String,
+                        },
+                        &expr.BinaryExpr{
+                            Op:    expr.Minus,
+                            Left:  &expr.FuncExpr{
+                                Name:       expr.Get,
+                                Parameters: []expr.Expr{&expr.ConstExpr{
+                                    Obj: "b",
+                                    Typ: expr.String,
+                                }},
+                            },
+                            Right: &expr.ConstExpr{
+                                Obj: 5,
+                                Typ: expr.Float64,
+                            },
+                        },
+                    },
+                },
+                Else: nil,
+            },
+        }},
+    )}
+
+    e := 3
+    newTxns := make([]*Txn, len(txns) * e)
+    for i := range newTxns {
+        newTxns[i] = txns[i%2].Clone()
+        newTxns[i].Keys = []string{"a", "b"}
+    }
+    txns = newTxns
+
+    initDBFunc := func (db *DB) {
+        db.SetUnsafe("a", 0, 0, nil)
+        db.SetUnsafe("b", 5, 0, nil)
+        db.ts.c.Set(0)
+    }
+
+    db := NewDB()
+    TxTest(t, db, txns, initDBFunc, func() TxEngine {
+        return NewTxEngineC2PL(db, 4)
     }, 10000)
 }
 

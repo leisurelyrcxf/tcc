@@ -30,6 +30,7 @@ type Op struct {
     typ OpType
     key string
     operatorNum float64
+
     expr expr.Expr
 }
 
@@ -76,8 +77,9 @@ var Counter = sync2.NewAtomicInt64(0)
 
 type Txn struct {
     // Readonly fields
-    ID  int64
-    Ops []Op
+    ID   int64
+    Ops  []Op
+    Keys []string
 
     // Changeable fields.
     commitData   map[string]float64
@@ -167,8 +169,14 @@ func (tx *Txn) AddReadVersion(key string, val int64) {
 }
 
 func (tx *Txn) CollectKeys() []string {
+    if tx.Keys != nil {
+        return tx.Keys
+    }
     var keys []string
     for _, op := range tx.Ops {
+        if op.key == "" {
+            continue
+        }
         keys = append(keys, op.key)
     }
     return keys

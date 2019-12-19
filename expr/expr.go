@@ -8,15 +8,14 @@ import (
 
 type Context map[string]float64
 
-type KV interface {
-    Get(key string) (float64, error)
-    Set(key string, val float64) error
-    GetContext() Context
+type Executor interface {
+    Get(key string, ctx Context) (float64, error)
+    Set(key string, val float64, ctx Context) error
 }
 
 type Expr interface {
     iExpr()
-    Eval(KV) (interface{}, error)
+    Eval(Executor, Context) (interface{}, error)
 }
 
 type Type int
@@ -34,7 +33,7 @@ type ConstExpr struct {
 
 func (ce *ConstExpr) iExpr() {}
 
-func (ce *ConstExpr) Eval(e KV) (interface{}, error) {
+func (ce *ConstExpr) Eval(e Executor, ctx Context) (interface{}, error) {
     switch ce.Typ {
     case Boolean:
         return ce.Obj.(bool), nil
@@ -68,8 +67,8 @@ var ErrKeyTypeNotString = fmt.Errorf("key type not string")
 var ErrValueTypeNotMatch = fmt.Errorf("value type not match")
 var ErrBoolTypeNotMatch = fmt.Errorf("bool type not match")
 
-func evalKey(expr Expr, e KV) (string, error) {
-    keyObj, err := expr.Eval(e)
+func evalKey(expr Expr, e Executor, ctx Context) (string, error) {
+    keyObj, err := expr.Eval(e, ctx)
     if err != nil {
         return "", err
     }
@@ -80,8 +79,8 @@ func evalKey(expr Expr, e KV) (string, error) {
     return key, nil
 }
 
-func evalValue(expr Expr, e KV) (float64, error) {
-    valueObj, err := expr.Eval(e)
+func evalValue(expr Expr, e Executor, ctx Context) (float64, error) {
+    valueObj, err := expr.Eval(e, ctx)
     if err != nil {
         return math.NaN(), err
     }
@@ -92,8 +91,8 @@ func evalValue(expr Expr, e KV) (float64, error) {
     return value, nil
 }
 
-func evalBoolean(expr Expr, e KV) (bool, error) {
-    bObj, err := expr.Eval(e)
+func evalBoolean(expr Expr, e Executor, ctx Context) (bool, error) {
+    bObj, err := expr.Eval(e, ctx)
     if err != nil {
         return false, err
     }
@@ -104,38 +103,30 @@ func evalBoolean(expr Expr, e KV) (bool, error) {
     return b, nil
 }
 
-func (fe *FuncExpr) Eval(e KV) (interface{}, error) {
-    ctx := e.GetContext()
+func (fe *FuncExpr) Eval(e Executor, ctx Context) (interface{}, error) {
     switch fe.Name {
     case Get:
         if len(fe.Parameters) != 1 {
             return nil, ErrParameterNumNotMatch
         }
-        key, err := evalKey(fe.Parameters[0], e)
+        key, err := evalKey(fe.Parameters[0], e, ctx)
         if err != nil {
             return nil, err
         }
-        if val, ok := ctx[key]; ok {
-            return val, nil
-        }
-        val, err := e.Get(key)
-        if err == nil {
-            ctx[key] = val
-        }
-        return val, err
+        return e.Get(key, ctx)
     case Set:
         if len(fe.Parameters) != 2 {
             return nil, ErrParameterNumNotMatch
         }
-        key, err := evalKey(fe.Parameters[0], e)
+        key, err := evalKey(fe.Parameters[0], e, ctx)
         if err != nil {
             return nil, err
         }
-        value, err := evalValue(fe.Parameters[1], e)
+        value, err := evalValue(fe.Parameters[1], e, ctx)
         if err != nil {
             return nil, err
         }
-        return nil, e.Set(key, value)
+        return nil, e.Set(key, value, ctx)
     default:
         panic("not implemented yet")
     }
@@ -156,12 +147,12 @@ type BinaryExpr struct {
     Right Expr
 }
 
-func (be *BinaryExpr) Eval(e KV) (interface{}, error) {
-    lf, err := evalValue(be.Left, e)
+func (be *BinaryExpr) Eval(e Executor, ctx Context) (interface{}, error) {
+    lf, err := evalValue(be.Left, e, ctx)
     if err != nil {
         return nil, err
     }
-    rf, err := evalValue(be.Right, e)
+    rf, err := evalValue(be.Right, e, ctx)
     if err != nil {
         return nil, err
     }
@@ -189,8 +180,8 @@ type IfExpr struct {
 
 func (ie *IfExpr) iExpr() {}
 
-func (ie *IfExpr) Eval(e KV) (interface{}, error) {
-    b, err := evalBoolean(ie.Pred, e)
+func (ie *IfExpr) Eval(e Executor, ctx Context) (interface{}, error) {
+    b, err := evalBoolean(ie.Pred, e, ctx)
     if err != nil {
         return nil, err
     }
@@ -198,11 +189,11 @@ func (ie *IfExpr) Eval(e KV) (interface{}, error) {
         if ie.Then == nil {
             return nil, nil
         }
-        return ie.Then.Eval(e)
+        return ie.Then.Eval(e, ctx)
     } else {
         if ie.Else == nil {
             return nil, nil
         }
-        return ie.Else.Eval(e)
+        return ie.Else.Eval(e, ctx)
     }
 }

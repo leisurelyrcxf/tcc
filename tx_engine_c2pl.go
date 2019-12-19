@@ -10,14 +10,16 @@ type TxEngineC2PL struct {
     threadNum int
     txns chan *Txn
     errs chan *TxnError
+    e *TxEngineBasicExecutor
     postCommitListeners []func(*Txn)
 }
 
-func NewTxEngineC2PL(threadNum int) *TxEngineC2PL {
+func NewTxEngineC2PL(db *DB, threadNum int) *TxEngineC2PL {
     return &TxEngineC2PL{
         threadNum: threadNum,
-        txns: make(chan *Txn, threadNum),
-        errs: make(chan *TxnError, threadNum),
+        txns:      make(chan *Txn, threadNum),
+        errs:      make(chan *TxnError, threadNum),
+        e:         NewTxEngineBasicExecutor(db),
     }
 }
 
@@ -95,6 +97,10 @@ func (te *TxEngineC2PL) executeOp(db* DB, tx *Txn, op Op) error {
     if op.typ == WriteDirect {
         db.SetUnsafe(op.key, op.operatorNum, 0, tx)
         return nil
+    }
+    if op.typ == Procedure {
+        _, err := op.expr.Eval(te.e, tx.ctx)
+        return err
     }
     panic("not implemented")
 }

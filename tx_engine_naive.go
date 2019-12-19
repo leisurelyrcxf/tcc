@@ -2,41 +2,47 @@ package tcc
 
 import (
     "fmt"
+    "github.com/golang/glog"
     "tcc/expr"
 )
 
-type TxEngineNaiveExecutor struct {
+type TxEngineBasicExecutor struct {
     db *DB
-    ctx expr.Context
 }
 
-func NewTxEngineNaiveExecutor(db *DB) *TxEngineNaiveExecutor {
-    return &TxEngineNaiveExecutor{
+func NewTxEngineBasicExecutor(db *DB) *TxEngineBasicExecutor {
+    return &TxEngineBasicExecutor{
         db:  db,
-        ctx: nil,
     }
 }
 
-func (e *TxEngineNaiveExecutor) Get(key string) (float64, error) {
-    return e.db.Get(key)
+func (e *TxEngineBasicExecutor) Get(key string, ctx expr.Context) (float64, error) {
+    if val, ok := ctx[key]; ok {
+        glog.V(10).Infof("Get cached value %f for key '%s'", val, key)
+        return val, nil
+    }
+    val, err := e.db.Get(key)
+    if err == nil {
+        ctx[key] = val
+        glog.V(10).Infof("Get value %f for key '%s'", val, key)
+    }
+    return val, err
 }
 
-func (e *TxEngineNaiveExecutor) Set(key string, val float64) error {
+func (e *TxEngineBasicExecutor) Set(key string, val float64, ctx expr.Context) error {
     e.db.SetUnsafe(key, val, 0, TxNaN)
+    ctx[key] = val
+    glog.V(10).Infof("Set value %f for key '%s'", val, key)
     return nil
 }
 
-func (e *TxEngineNaiveExecutor) GetContext() expr.Context {
-    return e.ctx
-}
-
 type TxEngineNaive struct {
-    e *TxEngineNaiveExecutor
+    e *TxEngineBasicExecutor
 }
 
 func NewTxEngineNaive(db *DB) *TxEngineNaive {
     return &TxEngineNaive{
-        e: NewTxEngineNaiveExecutor(db),
+        e: NewTxEngineBasicExecutor(db),
     }
 }
 
@@ -50,7 +56,6 @@ func (te *TxEngineNaive) ExecuteTxns(db* DB, txns []*Txn) error {
 }
 
 func (te *TxEngineNaive) executeSingleTx(db* DB, tx *Txn) error {
-    te.e.ctx = tx.ctx
     tx.Start(db.ts.FetchTimestamp())
     for _, op := range tx.Ops {
         if err := te.executeOp(db, tx, op); err != nil {
@@ -69,7 +74,7 @@ func (te *TxEngineNaive) executeOp(db* DB, tx *Txn, op Op) error {
         return nil
     }
     if op.typ == Procedure {
-        _, err := op.expr.Eval(te.e)
+        _, err := op.expr.Eval(te.e, tx.ctx)
         return err
     }
     panic("not implemented")
