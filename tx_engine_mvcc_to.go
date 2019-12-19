@@ -3,6 +3,7 @@ package tcc
 import (
     "fmt"
     "github.com/golang/glog"
+    "math"
     "sync"
     "tcc/assert"
     "tcc/data_struct"
@@ -49,11 +50,11 @@ func getMaxTxForKeyAndVersion(key string, version int64, m *data_struct.Concurre
     }
 }
 
-func (te *TxEngineMVCCTO) getMaxReadTxForKey(key string, version int64) *Txn {
+func (te *TxEngineMVCCTO) getMaxReadTxForKeyAndVersion(key string, version int64) *Txn {
     return getMaxTxForKeyAndVersion(key, version, &te.mr)
 }
 
-func (te *TxEngineMVCCTO) getMaxWriteTxForKey(key string, version int64) *Txn {
+func (te *TxEngineMVCCTO) getMaxWriteTxForKeyAndVersion(key string, version int64) *Txn {
     return getMaxTxForKeyAndVersion(key, version, &te.mw)
 }
 
@@ -85,30 +86,12 @@ func putTxForKeyAndVersion(key string, version int64, tx *Txn, m *data_struct.Co
     tm.Put(tx, nil)
 }
 
-func (te *TxEngineMVCCTO) putReadTxForKey(key string, version int64, tx *Txn, lm *LockManager) {
+func (te *TxEngineMVCCTO) putReadTxForKeyAndVersion(key string, version int64, tx *Txn, lm *LockManager) {
     putTxForKeyAndVersion(key, version, tx, &te.mr, lm)
 }
 
-func (te *TxEngineMVCCTO) putWriteTxForKey(key string, version int64, tx *Txn) {
+func (te *TxEngineMVCCTO) putWriteTxForKeyAndVersion(key string, version int64, tx *Txn) {
     putTxForKeyAndVersion(key, version, tx, &te.mw, nil)
-}
-
-func removeTxForKeyAndVersion(key string, version int64, tx *Txn, m *data_struct.ConcurrentMap) {
-    newKey := compactKey(key, version)
-    tmObj, _ := m.Get(newKey)
-    if tmObj == nil {
-        return
-    }
-    tm := tmObj.(*data_struct.ConcurrentTreeMap)
-    tm.Remove(tx)
-}
-
-func (te *TxEngineMVCCTO) removeReadTxForKey(key string, version int64, tx *Txn) {
-    removeTxForKeyAndVersion(key, version, tx, &te.mr)
-}
-
-func (te *TxEngineMVCCTO) removeWriteTxForKey(key string, version int64, tx *Txn) {
-    removeTxForKeyAndVersion(key, version, tx, &te.mw)
 }
 
 func (te *TxEngineMVCCTO) AddPostCommitListener(cb func(*Txn)) {
@@ -220,17 +203,13 @@ func (te *TxEngineMVCCTO) executeOp(db *DB, txn *Txn, op Op) error {
     }
     if op.typ == WriteDirect {
         // Needs to find out read versions still.
-        _, err := te.get(db, txn, op.key)
-        if err != nil {
-            return err
-        }
         return te.set(db, txn, op.key, op.operatorNum)
     }
     panic("not implemented")
 }
 
 func (te *TxEngineMVCCTO) executeIncrOp(db *DB, txn *Txn, op Op) error {
-    val, err := te.get(db, txn, op.key)
+    val, err := te.get(db, txn, op.key, true)
     if err != nil {
         return err
     }
@@ -247,34 +226,42 @@ func (te *TxEngineMVCCTO) executeIncrOp(db *DB, txn *Txn, op Op) error {
     return te.set(db, txn, op.key, val)
 }
 
-func (te *TxEngineMVCCTO) get(db *DB, txn *Txn, key string) (float64, error) {
-    te.lm.RLock(key)
-    defer te.lm.RUnlock(key)
+func (te *TxEngineMVCCTO) get(db *DB, txn *Txn, key string, waitIfDirty bool) (float64, error) {
+    txn.CheckFirstOp(db.ts)
+    ts := txn.GetTimestamp()
     glog.V(10).Infof("txn(%s) want to get key '%s'", txn.String(), key)
 
-    txn.CheckFirstOp(db.ts)
-    // ts won't change because only this thread can modify it's value.
-    ts := txn.GetTimestamp()
+    te.lm.RLock(key)
+    defer te.lm.RUnlock(key)
 
     for {
         dbVal, err := db.GetDBValueMaxVersionBelow(key, ts)
         if err != nil {
             return 0, NewTxnError(err,false)
         }
-        dbValWrittenTxn := dbVal.WrittenTxn
-        stats := dbValWrittenTxn.GetStatus()
-        if dbValWrittenTxn == emptyTx || stats.Succeeded() {
-            // TODO remove this
-            assert.Must(dbVal.WrittenTxn.GetTimestamp() == dbVal.Version)
-            te.putReadTxForKey(key, dbVal.Version, txn, db.lm)
+
+        if !waitIfDirty {
             txn.AddReadVersion(key, dbVal.Version)
-            glog.V(10).Infof("txn(%s) got value %f for key '%s'", txn.String(), dbVal.Value, key)
+            glog.V(10).Infof("txn(%s) got value(%f, %d) for key '%s'", txn.String(), math.NaN(), dbVal.Version, key)
+            return math.NaN(), nil
+        }
+
+        dbValWrittenTxn := dbVal.WrittenTxn
+        assert.Must(dbValWrittenTxn.GetTimestamp() == dbVal.Version)
+        stats := dbValWrittenTxn.GetStatus()
+
+        if dbValWrittenTxn == emptyTx || stats.Succeeded() {
+            te.putReadTxForKeyAndVersion(key, dbVal.Version, txn, db.lm)
+            txn.AddReadVersion(key, dbVal.Version)
+            glog.V(10).Infof("txn(%s) got value(%f, %d) for key '%s'", txn.String(), dbVal.Value, dbVal.Version, key)
             return dbVal.Value, nil
         }
+
         // TODO Try return directly, for readonly wait, otherwise return error.
         if stats.HasError() {
             continue
         }
+
         db.lm.RUnlock(key)
         dbValWrittenTxn.WaitUntilDone(txn)
         db.lm.RLock(key)
@@ -282,17 +269,25 @@ func (te *TxEngineMVCCTO) get(db *DB, txn *Txn, key string) (float64, error) {
 }
 
 func (te *TxEngineMVCCTO) set(db *DB, txn *Txn, key string, val float64) error {
-    te.lm.Lock(key)
-    defer te.lm.Unlock(key)
-    glog.V(10).Infof("txn(%s) want to set key '%s' to value %f", txn.String(), key, val)
-
     txn.CheckFirstOp(db.ts)
     ts := txn.GetTimestamp()
+    glog.V(10).Infof("txn(%s) want to set key '%s' to value(%f, %d)", txn.String(), key, val, ts)
+
+    readVersion, ok := txn.readVersions[key]
+    if !ok {
+        _, err := te.get(db, txn, key, false)
+        if err != nil {
+            return err
+        }
+        readVersion, ok = txn.readVersions[key]
+        assert.Must(ok)
+    }
+
+    te.lm.Lock(key)
+    defer te.lm.Unlock(key)
 
     // Write-read conflict
-    readVersion, ok := txn.readVersions[key]
-    assert.Must(ok)
-    if ts < te.getMaxReadTxForKey(key, readVersion).GetTimestamp() {
+    if ts < te.getMaxReadTxForKeyAndVersion(key, readVersion).GetTimestamp() {
         return txnErrConflict
     }
 

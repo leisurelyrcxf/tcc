@@ -91,23 +91,6 @@ func (te *TxEngineTO) putWriteTxForKey(key string, tx *Txn) {
     putTxForKey(key, tx, &te.mw, nil)
 }
 
-func removeTxForKey(key string, tx *Txn, m *data_struct.ConcurrentMap) {
-    obj, _ := m.Get(key)
-    if obj == nil {
-        return
-    }
-    tm := obj.(*data_struct.ConcurrentTreeMap)
-    tm.Remove(tx)
-}
-
-func (te *TxEngineTO) removeReadTxForKey(key string, tx *Txn) {
-    removeTxForKey(key, tx, &te.mr)
-}
-
-func (te *TxEngineTO) removeWriteTxForKey(key string, tx *Txn) {
-    removeTxForKey(key, tx, &te.mw)
-}
-
 func (te *TxEngineTO) AddPostCommitListener(cb func(*Txn)) {
     te.postCommitListeners = append(te.postCommitListeners, cb)
 }
