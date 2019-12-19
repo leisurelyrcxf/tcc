@@ -32,23 +32,23 @@ func TestTxEngineTimestampOrdering(t *testing.T) {
             operatorNum: 1,
         }},
     ),
-    NewTx(
-           []Op {{
-               key: "b",
-               typ: IncrMultiply,
-               operatorNum: 20,
-           }, {
-               key: "a",
-               typ: IncrAdd,
-               operatorNum: 10,
-           }},
-    ), NewTx(
-       []Op {{
-           key:         "a",
-           typ:         WriteDirect,
-           operatorNum: 100,
-       }},
-    ),
+    //NewTx(
+    //       []Op {{
+    //           key: "b",
+    //           typ: IncrMultiply,
+    //           operatorNum: 20,
+    //       }, {
+    //           key: "a",
+    //           typ: IncrAdd,
+    //           operatorNum: 10,
+    //       }},
+    //), NewTx(
+    //   []Op {{
+    //       key:         "a",
+    //       typ:         WriteDirect,
+    //       operatorNum: 100,
+    //   }},
+    //),
     }
 
     initDBFunc := func (db *DB) {
@@ -58,7 +58,7 @@ func TestTxEngineTimestampOrdering(t *testing.T) {
     }
 
     start := time.Now()
-    round := 100000
+    round := 10000
     for i := 0; i < round; i++ {
         glog.V(10).Infof("\nRound: %d\n", i)
         err := executeOneRound(db, txns, initDBFunc)

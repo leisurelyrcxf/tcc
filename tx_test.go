@@ -29,6 +29,9 @@ func GetAllPossibleSerializableResult(db *DB, txns []*Txn, initDBFunc func(db *D
         if oneOrderTxns == nil {
             continue
         }
+        for _, txn := range oneOrderTxns {
+            txn.ResetForTestOnly()
+        }
 
         initDBFunc(db)
         if err := ten.ExecuteTxns(db, oneOrderTxns); err != nil {
