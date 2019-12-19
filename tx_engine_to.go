@@ -236,7 +236,7 @@ func (te *TxEngineTO) executeIncrOp(db *DB, txn *Txn, op Op) error {
     return te.set(txn, op.key, val, db.ts)
 }
 
-func (te *TxEngineTO) get(db *DB, txn *Txn, key string) (val float64, err error) {
+func (te *TxEngineTO) get(db *DB, txn *Txn, key string) (float64, error) {
     te.lm.RLock(key)
     defer te.lm.RUnlock(key)
     glog.V(10).Infof("txn(%s) want to get key '%s'", txn.String(), key)
@@ -302,14 +302,12 @@ func (te *TxEngineTO) get(db *DB, txn *Txn, key string) (val float64, err error)
 
     vv, dbErr := db.GetDBValue(key)
     if dbErr != nil {
-        err = NewTxnError(dbErr, false)
-        return
+        return 0, NewTxnError(dbErr, false)
     }
 
     if ts < vv.Version {
         // Read future versions, can't do anything
-        err = txnErrConflict
-        return
+        return 0, txnErrConflict
     }
     // No need to check cause if we read that version, it is not possible to rollback.
     //writtenTxn := vv.WrittenTxn
@@ -317,12 +315,11 @@ func (te *TxEngineTO) get(db *DB, txn *Txn, key string) (val float64, err error)
     //    writtenTxn.WaitUntilDone(txn)
     //}
     te.putReadTxForKey(key, txn, db.lm)
-    val = vv.Value
-    glog.V(10).Infof("txn(%s) got value %f for key '%s'", txn.String(), val, key)
-    return
+    glog.V(10).Infof("txn(%s) got value %f for key '%s'", txn.String(), vv.Value, key)
+    return vv.Value, nil
 }
 
-func (te *TxEngineTO) set(txn *Txn, key string, val float64, timeServ *TimeServer) (err error) {
+func (te *TxEngineTO) set(txn *Txn, key string, val float64, timeServ *TimeServer) error {
     te.lm.Lock(key)
     defer te.lm.Unlock(key)
     glog.V(10).Infof("txn(%s) want to set key '%s' to value %f", txn.String(), key, val)
@@ -332,8 +329,7 @@ func (te *TxEngineTO) set(txn *Txn, key string, val float64, timeServ *TimeServe
 
     // Write-read conflict
     if ts < te.getMaxReadTxForKey(key).GetTimestamp() {
-        err = txnErrConflict
-        return
+        return txnErrConflict
     }
 
     // Write-write conflict
@@ -345,7 +341,7 @@ func (te *TxEngineTO) set(txn *Txn, key string, val float64, timeServ *TimeServe
                 if status.Done() {
                     if status.Succeeded() {
                         // Apply Thomas's write rule.
-                        return
+                        return nil
                     }
                     //assert.Must(status.HasError())
                     break
@@ -366,5 +362,5 @@ func (te *TxEngineTO) set(txn *Txn, key string, val float64, timeServ *TimeServe
     txn.AddCommitData(key, val)
     te.putWriteTxForKey(key, txn)
     glog.V(10).Infof("txn(%s) succeeded in setting key '%s' to value %f", txn.String(), key, val)
-    return
+    return nil
 }
