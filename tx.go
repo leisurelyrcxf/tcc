@@ -83,7 +83,6 @@ type Txn struct {
     round    sync2.AtomicInt32
     status sync2.AtomicInt32
 
-    ReadVersion int64
     firstOpMet bool
 
     mutex sync.Mutex
@@ -101,7 +100,6 @@ func NewTx(ops []Op) *Txn {
         round: sync2.NewAtomicInt32(0),
         status: sync2.NewAtomicInt32(int32(TxStatusInitialized)),
 
-        ReadVersion: 0,
         firstOpMet:  false,
     }
     txn.cond = sync.Cond{
@@ -139,7 +137,6 @@ func (tx *Txn) Start(ts int64) {
 
     tx.timestamp.Set(ts)
     tx.SetStatusLocked(TxStatusPending)
-    tx.ReadVersion = 0
 
     tx.mutex.Unlock()
 
@@ -161,6 +158,9 @@ func (tx *Txn) Done(status TxStatus) {
 }
 
 func (tx *Txn) GetTimestamp() int64 {
+    if tx == nil {
+        return 0
+    }
     return tx.timestamp.Get()
 }
 
@@ -218,8 +218,6 @@ func (tx *Txn) Reset() {
 
     tx.round.Set(0)
     tx.SetStatusLocked(TxStatusInitialized)
-
-    tx.ReadVersion = 0
 
     tx.mutex.Unlock()
 

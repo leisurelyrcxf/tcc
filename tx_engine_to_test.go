@@ -58,8 +58,8 @@ func TestTxEngineTimestampOrdering(t *testing.T) {
         db.ts.c.Set(0)
     }
 
-    round := 10000
     start := time.Now()
+    round := 10000
     for i := 0; i < round; i++ {
         glog.V(10).Infof("\nRound: %d\n", i)
         err := executeOneRound(db, txns, initDBFunc)

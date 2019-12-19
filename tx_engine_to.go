@@ -4,9 +4,9 @@ import (
     "fmt"
     "github.com/golang/glog"
     "sync"
-    "time"
     "tcc/assert"
     "tcc/data_struct"
+    "time"
 )
 
 var txnErrConflict = NewTxnError(fmt.Errorf("txn conflict"), true)
@@ -18,8 +18,6 @@ type TxEngineTO struct {
     mr             data_struct.ConcurrentMap
     lm             *LockManager
     txns           chan *Txn
-    committingTxns chan *Txn
-    committerDone  chan struct{}
     errs           chan *TxnError
 }
 
@@ -30,8 +28,6 @@ func NewTxEngineTO(threadNum int, lm *LockManager) *TxEngineTO {
         mr:             data_struct.NewConcurrentMap(1024),
         lm:             lm,
         txns:           make(chan *Txn, threadNum),
-        committingTxns: make(chan *Txn, 100),
-        committerDone:  make(chan struct{}),
         errs:           make(chan *TxnError, threadNum * 100),
     }
 }
@@ -135,14 +131,8 @@ func (te *TxEngineTO) ExecuteTxns(db *DB, txns []*Txn) error {
         }()
     }
 
-    go te.committer(db)
-
     // Wait txn threads to end.
     wg.Wait()
-    // Notify committer to end.
-    close(te.committingTxns)
-    // Wait committer to end.
-    <-te.committerDone
 
     select {
     case err := <- te.errs:
@@ -159,39 +149,6 @@ func (te *TxEngineTO) executeTxnsSingleThread(db *DB) error {
         }
     }
     return nil
-}
-
-func (te *TxEngineTO) committer(db *DB) {
-    defer close(te.committerDone)
-    for txn := range te.committingTxns {
-        ts := txn.GetTimestamp()
-        for k, v := range txn.GetCommitData() {
-            vv, err := db.GetDBValue(k)
-            if err == KeyNotExist {
-                // Safe here.
-                db.SetUnsafe(k, v, ts, txn)
-                continue
-            }
-            if err != nil {
-                te.errs <-NewTxnError(fmt.Errorf("unexpected happens during db.Get, detail: '%s'", err.Error()), false)
-                txn.Done(TxStatusFailed)
-                return
-            }
-            if ts >= vv.Version {
-                // Safe here.
-                db.SetUnsafe(k, v, ts, txn)
-            } else {
-                msg := fmt.Sprintf("ignored txn(%d, %d) committed value %f for key '%s'," +
-                    " version_num_of_txn(%d) < committed_version(%d)",
-                    txn.TxId, ts, v, k, ts, vv.Version)
-                glog.Warningf(msg)
-            }
-        }
-        glog.V(10).Infof("txn(%s) succeeded", txn.String())
-        txn.Done(TxStatusSucceeded)
-        // Mark this version visible, this is an atomic commit.
-        db.AddVersion(ts)
-    }
 }
 
 func (te *TxEngineTO) executeSingleTx(db *DB, tx *Txn) error {
@@ -220,8 +177,15 @@ func (te *TxEngineTO) _executeSingleTx(db *DB, txn *Txn) (err error) {
         }
     }
 
-    te.committingTxns <- txn
+    te.commit(db, txn)
     return
+}
+
+func (te *TxEngineTO) commit(db *DB, tx *Txn) {
+    for key, val := range tx.GetCommitData() {
+        db.SetSafe(key, val, tx)
+    }
+    tx.Done(TxStatusSucceeded)
 }
 
 func (te *TxEngineTO) rollback(tx *Txn, reason error) {
@@ -342,23 +306,16 @@ func (te *TxEngineTO) get(db *DB, txn *Txn, key string) (val float64, err error)
         return
     }
 
-    if txn.ReadVersion == 0 {
-        txn.ReadVersion = db.FindMaxVersion(func(version int64) bool {
-            return version <= ts
-        })
-    }
-    if txn.ReadVersion < vv.Version {
+    if ts < vv.Version {
         // Read future versions, can't do anything
         err = txnErrConflict
         return
     }
-    writtenTxn := vv.WrittenTxn
-    if writtenTxn != nil && !writtenTxn.GetStatus().Done() {
-        // Shouldn't be possible since commit is atomic.
-        assert.Must(false)
-        // Committing, wait till valid.
-        //writtenTxn.WaitUntilDone(txn)
-    }
+    // No need to check cause if we read that version, it is not possible to rollback.
+    //writtenTxn := vv.WrittenTxn
+    //if writtenTxn != nil && !writtenTxn.GetStatus().Done() {
+    //    writtenTxn.WaitUntilDone(txn)
+    //}
     te.putReadTxForKey(key, txn, db.lm)
     val = vv.Value
     glog.V(10).Infof("txn(%s) got value %f for key '%s'", txn.String(), val, key)

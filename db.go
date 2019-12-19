@@ -2,6 +2,7 @@ package tcc
 
 import (
     "fmt"
+    "github.com/golang/glog"
     "tcc/data_struct"
 )
 
@@ -54,6 +55,19 @@ func (db *DB) Get(key string) (float64, error) {
         return vv.Value, nil
     }
     return 0.0, KeyNotExist
+}
+
+func (db *DB) SetSafe(key string, val float64, writtenTxn *Txn) bool {
+    version := writtenTxn.GetTimestamp()
+    setted, prevVal := db.values.SetIf(key, NewDBValue(val, version, writtenTxn), func(prev interface{}, exist bool) bool {
+        return !exist || version >= prev.(DBValue).Version
+    })
+    if !setted {
+        glog.Warningf("ignored txn(%s) committed value %f for key '%s'," +
+            " version_num_of_txn(%d) < committed_version(%d)",
+            writtenTxn.String(), val, key, version, prevVal.(DBValue).Version)
+    }
+    return setted
 }
 
 func (db *DB) SetUnsafe(key string, val float64, version int64, writtenTxn *Txn) {
