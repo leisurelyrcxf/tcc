@@ -80,6 +80,9 @@ func TxTest(t *testing.T, db *DB, txns []*Txn, initDBFunc func(*DB),
             t.Errorf("result %s not conflict serializable", SerializeMap(db.Snapshot()))
             return
         }
+        if i % 100 == 0 {
+            fmt.Printf("%d rounds finished\n", i)
+        }
     }
     fmt.Printf("\nCost %f seconds for %d rounds\n", float64(time.Since(start))/float64(time.Second), round)
 }
