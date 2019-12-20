@@ -255,14 +255,14 @@ func (tx *Txn) Start(ts *TimeServer, tid int, waitInterval time.Duration) {
     assert.Must(tx.GetStatus() == TxStatusInitialized)
     assert.Must(!tx.firstOpMet)
 
-    time.Sleep(time.Duration(tid) * waitInterval)
-    tx.timestamp.Set(ts.FetchTimestamp())
-
     tx.SetStatusLocked(TxStatusPending)
 
-    c := data_struct.NewConcurrentMap(256)
+    c := data_struct.NewConcurrentMap(8)
     tx.done     = make(chan struct{})
     tx.waiters  = &c
+
+    time.Sleep(time.Duration(tid) * waitInterval)
+    tx.timestamp.Set(ts.FetchTimestamp())
 
     glog.V(10).Infof("Start txn(%s), status: '%s'", tx.String(), tx.GetStatus().String())
 }
