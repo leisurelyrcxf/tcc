@@ -288,10 +288,12 @@ func (te *TxEngineMVCCTO) get(db *DB, txn *Txn, key string) (float64, error) {
             return dbVal.Value, nil
         }
 
-        // TODO Try return directly, for readonly wait, otherwise return error.
         if stats.HasError() {
             continue
         }
+
+        // TODO return directly
+        return 0, txnErrConflict
 
         db.lm.RUnlock(key)
         dbValWrittenTxn.WaitUntilDone(txn)
@@ -316,10 +318,9 @@ func (te *TxEngineMVCCTO) set(db *DB, txn *Txn, key string, val float64) error {
         }
         readVersion = dbVal.Version
     } else {
-        // TODO can be removed
-        dbVal, err := db.GetDBValueMaxVersionBelow(key, ts)
-        assert.MustNoError(err)
-        assert.Must(dbVal.Version == readVersion)
+        //dbVal, err := db.GetDBValueMaxVersionBelow(key, ts)
+        //assert.MustNoError(err)
+        //assert.Must(dbVal.Version == readVersion)
     }
 
     // Write-read conflict

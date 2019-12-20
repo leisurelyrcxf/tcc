@@ -298,8 +298,8 @@ func (tx *Txn) WaitUntilDone(waiter *Txn) {
     loopTimes := 0
     for !tx.GetStatus().Done()  {
         if loopTimes > 0 {
-            glog.V(5).Infof("txn(%s) waited once txn(%s) successfully", waiterDesc, tx.String())
-            glog.V(5).Infof("txn(%s) wait once for txn(%s) to finish", waiterDesc, tx.String())
+            glog.V(10).Infof("txn(%s) waited once txn(%s) successfully", waiterDesc, tx.String())
+            glog.V(10).Infof("txn(%s) wait once for txn(%s) to finish", waiterDesc, tx.String())
         }
         tx.cond.Wait()
         loopTimes++
