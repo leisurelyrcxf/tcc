@@ -245,7 +245,7 @@ func executeOneRoundMVCCTO(db *DB, txns []*Txn, initDBFunc func(*DB), logRes boo
     //})
 
     start := time.Now()
-    te := NewTxEngineMVCCTO(db, 4, db.lm, true)
+    te := NewTxEngineMVCCTO(db, 4, true, time.Nanosecond * 500)
     if err := te.ExecuteTxns(db, txns); err != nil {
         return 0, err
     }

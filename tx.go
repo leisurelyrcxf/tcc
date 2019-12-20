@@ -10,6 +10,7 @@ import (
     "tcc/data_struct"
     "tcc/expr"
     "tcc/sync2"
+    "time"
 )
 
 type OpType int
@@ -247,17 +248,19 @@ func (tx *Txn) SetStatusLocked(status TxStatus) {
     tx.status.Set(int32(status))
 }
 
-func (tx *Txn) Start(ts int64) {
+func (tx *Txn) Start(ts *TimeServer, tid int, waitInterval time.Duration) {
     assert.Must(tx.timestamp.Get() == 0)
     assert.Must(len(tx.commitData) == 0)
     assert.Must(len(tx.readVersions) == 0)
     assert.Must(tx.GetStatus() == TxStatusInitialized)
     assert.Must(!tx.firstOpMet)
 
-    tx.timestamp.Set(ts)
+    time.Sleep(time.Duration(tid) * waitInterval)
+    tx.timestamp.Set(ts.FetchTimestamp())
+
     tx.SetStatusLocked(TxStatusPending)
 
-    c := data_struct.NewConcurrentMap(1024)
+    c := data_struct.NewConcurrentMap(256)
     tx.done     = make(chan struct{})
     tx.waiters  = &c
 

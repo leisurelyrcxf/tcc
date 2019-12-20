@@ -53,24 +53,26 @@ func (e *TxEngineExecutorTO) Set(key string, val float64, ctx expr.Context) erro
 }
 
 type TxEngineTO struct {
-    threadNum            int
-    mw                   data_struct.ConcurrentMap
-    mr                   data_struct.ConcurrentMap
-    lm                   *LockManager
-    txns                 chan *Txn
-    errs                 chan *TxnError
-    postCommitListeners  []func(*Txn)
-    e                    *TxEngineExecutorTO
+    threadNum           int
+    mw                  data_struct.ConcurrentMap
+    mr                  data_struct.ConcurrentMap
+    lm                  *LockManager
+    txns                chan *Txn
+    errs                chan *TxnError
+    postCommitListeners []func(*Txn)
+    startWaitInterval   time.Duration
+    e                   *TxEngineExecutorTO
 }
 
-func NewTxEngineTO(db *DB, threadNum int, lm *LockManager, enableCache bool) *TxEngineTO {
+func NewTxEngineTO(db *DB, threadNum int, lm *LockManager, enableCache bool, startWaitInterval time.Duration) *TxEngineTO {
     te := &TxEngineTO{
-        threadNum:      threadNum,
-        mw:             data_struct.NewConcurrentMap(1024),
-        mr:             data_struct.NewConcurrentMap(1024),
-        lm:             lm,
-        txns:           make(chan *Txn, threadNum),
-        errs:           make(chan *TxnError, threadNum * 100),
+        threadNum:         threadNum,
+        mw:                data_struct.NewConcurrentMap(1024),
+        mr:                data_struct.NewConcurrentMap(1024),
+        lm:                lm,
+        txns:              make(chan *Txn, threadNum),
+        errs:              make(chan *TxnError, threadNum * 100),
+        startWaitInterval: startWaitInterval,
     }
     te.e = NewTxEngineExecutorTO(te, db, enableCache)
     return te
@@ -149,12 +151,12 @@ func (te *TxEngineTO) ExecuteTxns(db *DB, txns []*Txn) error {
     var wg sync.WaitGroup
     for i := 0; i < te.threadNum; i++ {
         wg.Add(1)
-        go func() {
+        go func(tid int) {
             defer wg.Done()
-            if err := te.executeTxnsSingleThread(db); err != nil {
+            if err := te.executeTxnsSingleThread(db, tid); err != nil {
                 te.errs <-err.(*TxnError)
             }
-        }()
+        }(i)
     }
 
     // Wait txn threads to end.
@@ -168,18 +170,18 @@ func (te *TxEngineTO) ExecuteTxns(db *DB, txns []*Txn) error {
     }
 }
 
-func (te *TxEngineTO) executeTxnsSingleThread(db *DB) error {
+func (te *TxEngineTO) executeTxnsSingleThread(db *DB, tid int) error {
     for txn := range te.txns {
-        if err := te.executeSingleTx(db, txn); err != nil {
+        if err := te.executeSingleTx(db, txn, tid); err != nil {
             return err
         }
     }
     return nil
 }
 
-func (te *TxEngineTO) executeSingleTx(db *DB, tx *Txn) error {
+func (te *TxEngineTO) executeSingleTx(db *DB, tx *Txn, tid int) error {
     for {
-        err := te._executeSingleTx(db, tx)
+        err := te._executeSingleTx(db, tx, tid)
         if err != nil && err.(*TxnError).IsRetryable() {
             tx = tx.Clone()
             continue
@@ -188,9 +190,9 @@ func (te *TxEngineTO) executeSingleTx(db *DB, tx *Txn) error {
     }
 }
 
-func (te *TxEngineTO) _executeSingleTx(db *DB, txn *Txn) (err error) {
+func (te *TxEngineTO) _executeSingleTx(db *DB, txn *Txn, tid int) (err error) {
     // Assign a new timestamp.
-    txn.Start(db.ts.FetchTimestamp())
+    txn.Start(db.ts, tid, te.startWaitInterval)
 
     defer func() {
         if err != nil {

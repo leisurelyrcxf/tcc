@@ -7,19 +7,19 @@ import (
 )
 
 type TxEngineC2PL struct {
-    threadNum int
-    txns chan *Txn
-    errs chan *TxnError
-    e *TxEngineBasicExecutor
+    threadNum           int
+    txns                chan *Txn
+    errs                chan *TxnError
+    e                   *TxEngineBasicExecutor
     postCommitListeners []func(*Txn)
 }
 
 func NewTxEngineC2PL(db *DB, threadNum int) *TxEngineC2PL {
     return &TxEngineC2PL{
-        threadNum: threadNum,
-        txns:      make(chan *Txn, threadNum),
-        errs:      make(chan *TxnError, threadNum),
-        e:         NewTxEngineBasicExecutor(db),
+        threadNum:         threadNum,
+        txns:              make(chan *Txn, threadNum),
+        errs:              make(chan *TxnError, threadNum),
+        e:                 NewTxEngineBasicExecutor(db),
     }
 }
 
@@ -38,12 +38,12 @@ func (te *TxEngineC2PL) ExecuteTxns(db* DB, txns []*Txn) error {
     var wg sync.WaitGroup
     for i := 0; i < te.threadNum; i++ {
         wg.Add(1)
-        go func() {
+        go func(tid int) {
             defer wg.Done()
-            if err := te.executeTxnsSingleThread(db); err != nil {
+            if err := te.executeTxnsSingleThread(db, tid); err != nil {
                 te.errs <- err.(*TxnError)
             }
-        }()
+        }(i)
     }
     wg.Wait()
 
@@ -55,17 +55,17 @@ func (te *TxEngineC2PL) ExecuteTxns(db* DB, txns []*Txn) error {
     }
 }
 
-func (te *TxEngineC2PL) executeTxnsSingleThread(db* DB) error {
+func (te *TxEngineC2PL) executeTxnsSingleThread(db* DB, tid int) error {
     for txn := range te.txns {
-        if err := te.executeSingleTx(db, txn); err != nil {
+        if err := te.executeSingleTx(db, txn, tid); err != nil {
             return err
         }
     }
     return nil
 }
 
-func (te *TxEngineC2PL) executeSingleTx(db* DB, tx *Txn) error {
-    tx.Start(db.ts.FetchTimestamp())
+func (te *TxEngineC2PL) executeSingleTx(db* DB, tx *Txn, tid int) error {
+    tx.Start(db.ts, tid, 0)
 
     keys := tx.CollectKeys()
     sort.Strings(keys)
