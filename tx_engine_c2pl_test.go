@@ -27,23 +27,23 @@ func TestNewTxEngineC2PL(t *testing.T) {
             operatorNum: 1,
         }},
     ),
-    //NewTx(
-    //    []Op {{
-    //        key: "b",
-    //        typ: IncrMultiply,
-    //        operatorNum: 20,
-    //    }, {
-    //        key: "a",
-    //        typ: IncrAdd,
-    //        operatorNum: 10,
-    //    }},
-    //), NewTx(
-    //    []Op {{
-    //        key:         "a",
-    //        typ:         WriteDirect,
-    //        operatorNum: 100,
-    //    }},
-    //),
+    NewTx(
+       []Op {{
+           key: "b",
+           typ: IncrMultiply,
+           operatorNum: 20,
+       }, {
+           key: "a",
+           typ: IncrAdd,
+           operatorNum: 10,
+       }},
+    ), NewTx(
+       []Op {{
+           key:         "a",
+           typ:         WriteDirect,
+           operatorNum: 100,
+       }},
+    ),
     }
 
     initDBFunc := func (db *DB) {
@@ -55,7 +55,7 @@ func TestNewTxEngineC2PL(t *testing.T) {
     db := NewDB()
     TxTest(t, db, txns, initDBFunc, func() TxEngine {
         return NewTxEngineC2PL(db, 4)
-    }, 10000)
+    }, 10000, true)
 }
 
 func Test2PCL_Procedure(t *testing.T) {
@@ -169,11 +169,13 @@ func Test2PCL_Procedure(t *testing.T) {
         }},
     )}
 
-    e := 3
+    // Will fail due to write-skew
+    // txns[0].Keys = []string{"a"}; txns[1].Keys = []string{"b"}
+    txns[0].Keys = []string{"a", "b"}; txns[1].Keys = []string{"b", "a"}
+    e := 2
     newTxns := make([]*Txn, len(txns) * e)
     for i := range newTxns {
         newTxns[i] = txns[i%2].Clone()
-        newTxns[i].Keys = []string{"a", "b"}
     }
     txns = newTxns
 
@@ -186,7 +188,7 @@ func Test2PCL_Procedure(t *testing.T) {
     db := NewDB()
     TxTest(t, db, txns, initDBFunc, func() TxEngine {
         return NewTxEngineC2PL(db, 4)
-    }, 10000)
+    }, 10000, e <= 2)
 }
 
 

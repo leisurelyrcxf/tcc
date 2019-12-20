@@ -139,9 +139,15 @@ func NewTx(ops []Op) *Txn {
 }
 
 func (tx *Txn) Clone() *Txn {
+    var clonedKeys []string
+    if tx.Keys != nil {
+        clonedKeys = make([]string, len(tx.Keys))
+        copy(clonedKeys, tx.Keys)
+    }
     newTxn := &Txn{
-        ID:  tx.ID,
-        Ops: tx.Ops,
+        ID:   tx.ID,
+        Ops:  tx.Ops,
+        Keys: clonedKeys,
 
         commitData:   make(map[string]float64),
         readVersions: make(map[string]int64),
@@ -150,14 +156,63 @@ func (tx *Txn) Clone() *Txn {
         status:       sync2.NewAtomicInt32(int32(TxStatusInitialized)),
 
         firstOpMet:   false,
+
+        prev:         tx,
+        next:         nil,
+
         ctx:          make(map[string]float64),
     }
     newTxn.cond = sync.Cond{
         L: &newTxn.mutex,
     }
     tx.next = newTxn
-    newTxn.prev = tx
+    tx.GC()
     return newTxn
+}
+
+func (tx *Txn) GC() {
+    tx.commitData = nil
+    tx.readVersions = nil
+    tx.ctx = nil
+}
+
+func (tx *Txn) Clear() {
+    tx.ClearCommitData()
+    tx.ClearReadVersions()
+    tx.ClearContext()
+}
+
+func (tx *Txn) ClearCommitData() {
+    tx.commitData = make(map[string]float64)
+}
+
+func (tx *Txn) ClearReadVersions() {
+    tx.readVersions = make(map[string]int64)
+}
+
+func (tx *Txn) ClearContext() {
+    tx.ctx = make(map[string]float64)
+}
+
+// Only used in tests.
+func (tx *Txn) ResetForTestOnly() {
+    tx.mutex.Lock()
+
+    tx.timestamp.Set(0)
+
+    tx.SetStatusLocked(TxStatusInitialized)
+
+    tx.firstOpMet = false
+
+    tx.next = nil
+    tx.prev = nil
+
+    tx.Clear()
+
+    tx.mutex.Unlock()
+
+    tx.cond.Broadcast()
+    glog.V(10).Infof("Reset txn(%s)", tx.String())
 }
 
 func (tx *Txn) AddCommitData(key string, val float64) {
@@ -254,43 +309,12 @@ func (tx *Txn) WaitUntilDone(waiter *Txn) {
     tx.mutex.Unlock()
 }
 
-// Only used in tests.
-func (tx *Txn) ResetForTestOnly() {
-    tx.mutex.Lock()
-
-    tx.ClearCommitData()
-    tx.ClearReadVersions()
-    tx.timestamp.Set(0)
-
-    tx.SetStatusLocked(TxStatusInitialized)
-
-    tx.firstOpMet = false
-
-    tx.next = nil
-    tx.prev = nil
-
-    tx.ctx = make(map[string]float64)
-
-    tx.mutex.Unlock()
-
-    tx.cond.Broadcast()
-    glog.V(10).Infof("Reset txn(%s)", tx.String())
-}
-
 func (tx *Txn) GetCommitData() map[string]float64 {
     return tx.commitData
 }
 
 func (tx *Txn) GetReadVersions() map[string]int64 {
     return tx.readVersions
-}
-
-func (tx *Txn) ClearCommitData() {
-    tx.commitData = make(map[string]float64)
-}
-
-func (tx *Txn) ClearReadVersions() {
-    tx.readVersions = make(map[string]int64)
 }
 
 func (tx *Txn) CheckFirstOp(ts *TimeServer) {

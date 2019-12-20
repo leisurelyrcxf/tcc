@@ -228,8 +228,7 @@ func (te *TxEngineTO) rollback(tx *Txn, reason error) {
     //    te.removeReadTxForKey(key, tx)
     //    te.removeWriteTxForKey(key, tx)
     //}
-    tx.ClearCommitData()
-    tx.ClearReadVersions()
+    tx.Clear()
     if reason == txnErrStaleWrite {
         tx.Done(TxStatusFailedRetryable)
     } else if reason == txnErrConflict {

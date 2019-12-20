@@ -70,7 +70,7 @@ func TestTxEngineMVCCTO(t *testing.T) {
     round := 10000
     for i := 0; i < round; i++ {
         glog.V(10).Infof("\nRound: %d\n", i)
-        duration, err := executeOneRoundMVCCTO(db, txns, initDBFunc)
+        duration, err := executeOneRoundMVCCTO(db, txns, initDBFunc, false)
         totalTime+= duration
 
         if err != nil {
@@ -217,7 +217,7 @@ func TestTxEngineMVCCTOProc(t *testing.T) {
     round := 10000
     for i := 0; i < round; i++ {
         glog.V(10).Infof("\nRound: %d\n", i)
-        duration, err := executeOneRoundMVCCTO(db, txns, initDBFunc)
+        duration, err := executeOneRoundMVCCTO(db, txns, initDBFunc, true)
         totalTime+= duration
 
         if err != nil {
@@ -231,7 +231,7 @@ func TestTxEngineMVCCTOProc(t *testing.T) {
     fmt.Printf("\nCost %f seconds for %d rounds\n", float64(totalTime)/float64(time.Second), round)
 }
 
-func executeOneRoundMVCCTO(db *DB, txns []*Txn, initDBFunc func(*DB)) (time.Duration, error) {
+func executeOneRoundMVCCTO(db *DB, txns []*Txn, initDBFunc func(*DB), logRes bool) (time.Duration, error) {
     initDBFunc(db)
     for _, txn := range txns {
         txn.ResetForTestOnly()
@@ -278,6 +278,10 @@ func executeOneRoundMVCCTO(db *DB, txns []*Txn, initDBFunc func(*DB)) (time.Dura
     datum := db.Snapshot()
     if !areEqualMaps(res, datum) {
         return 0, fmt.Errorf("expect '%s', but met '%s'", SerializeMap(datum), SerializeMap(res))
+    } else {
+        if logRes {
+            glog.Infof("res: '%s'", SerializeMap(res))
+        }
     }
     return duration, nil
 }

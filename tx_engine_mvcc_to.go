@@ -217,8 +217,7 @@ func (te *TxEngineMVCCTO) rollback(db *DB, txn *Txn, reason error) {
     for key, _ := range txn.GetCommitData() {
         db.MustRemoveVersion(key, ts)
     }
-    txn.ClearCommitData()
-    txn.ClearReadVersions()
+    txn.Clear()
     glog.V(10).Infof("rollback txn(%s) due to error '%s'%s", txn.String(), reason.Error(), retryLaterStr)
     if reason == txnErrStaleWrite {
         txn.Done(TxStatusFailedRetryable)

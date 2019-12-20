@@ -19,7 +19,7 @@ func TestTxnError(t *testing.T) {
     }
 }
 
-func GetAllPossibleSerializableResult(db *DB, txns []*Txn, initDBFunc func(db *DB)) ([]map[string]float64, error) {
+func GetAllPossibleSerializableResult(db *DB, txns []*Txn, initDBFunc func(db *DB), logAll bool) ([]map[string]float64, error) {
     initDBFunc(db)
 
     var allPossibleExecuteResults []map[string]float64
@@ -36,12 +36,13 @@ func GetAllPossibleSerializableResult(db *DB, txns []*Txn, initDBFunc func(db *D
         initDBFunc(db)
         if err := ten.ExecuteTxns(db, oneOrderTxns); err != nil {
             newErr := fmt.Errorf("execute failed for oneOrderTxns, detail: '%s'", err.Error())
-            fmt.Println(newErr.Error())
             return nil, newErr
         }
 
         oneResult := db.Snapshot()
-        fmt.Printf("One possible serialize order: %s. Result: %s\n", SerializeTxns(oneOrderTxns), SerializeMap(oneResult))
+        if logAll {
+            glog.V(1).Infof("One possible serialize order: %s. Result: %s\n", SerializeTxns(oneOrderTxns), SerializeMap(oneResult))
+        }
         allPossibleExecuteResults = append(allPossibleExecuteResults, oneResult)
     }
 
@@ -49,10 +50,10 @@ func GetAllPossibleSerializableResult(db *DB, txns []*Txn, initDBFunc func(db *D
 }
 
 func TxTest(t *testing.T, db *DB, txns []*Txn, initDBFunc func(*DB),
-    txnEngineConstructor func() TxEngine, round int) {
+    txnEngineConstructor func() TxEngine, round int, logAll bool) {
     initDBFunc(db)
 
-    allPossibleExecuteResults, err := GetAllPossibleSerializableResult(db, txns, initDBFunc)
+    allPossibleExecuteResults, err := GetAllPossibleSerializableResult(db, txns, initDBFunc, logAll)
     if err != nil {
         t.Errorf(err.Error())
         return
