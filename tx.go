@@ -3,7 +3,6 @@ package tcc
 import (
     "fmt"
     "github.com/golang/glog"
-    "sync"
     "tcc/assert"
     "tcc/expr"
     "tcc/sync2"
@@ -92,13 +91,12 @@ type Txn struct {
 
     firstOpMet   bool
 
-    mutex        sync.Mutex
-    cond         sync.Cond
-
     next         *Txn
     prev         *Txn
 
     ctx          Context
+
+    done         chan struct{}
 }
 
 const TxIDNaN = -1
@@ -132,9 +130,6 @@ func NewTx(ops []Op) *Txn {
         firstOpMet:   false,
         ctx:          make(map[string]float64),
     }
-    txn.cond = sync.Cond{
-        L: &txn.mutex,
-    }
     return txn
 }
 
@@ -161,9 +156,6 @@ func (tx *Txn) Clone() *Txn {
         next:         nil,
 
         ctx:          make(map[string]float64),
-    }
-    newTxn.cond = sync.Cond{
-        L: &newTxn.mutex,
     }
     tx.next = newTxn
     tx.GC()
@@ -196,8 +188,6 @@ func (tx *Txn) ClearContext() {
 
 // Only used in tests.
 func (tx *Txn) ResetForTestOnly() {
-    tx.mutex.Lock()
-
     tx.timestamp.Set(0)
 
     tx.SetStatusLocked(TxStatusInitialized)
@@ -209,9 +199,6 @@ func (tx *Txn) ResetForTestOnly() {
 
     tx.Clear()
 
-    tx.mutex.Unlock()
-
-    tx.cond.Broadcast()
     glog.V(10).Infof("Reset txn(%s)", tx.String())
 }
 
@@ -258,26 +245,20 @@ func (tx *Txn) Start(ts int64) {
     assert.Must(tx.GetStatus() == TxStatusInitialized)
     assert.Must(!tx.firstOpMet)
 
-    tx.mutex.Lock()
-
     tx.timestamp.Set(ts)
     tx.SetStatusLocked(TxStatusPending)
 
-    tx.mutex.Unlock()
+    tx.done = make(chan struct{})
 
-    tx.cond.Broadcast()
     glog.V(10).Infof("Start txn(%s), status: '%s'", tx.String(), tx.GetStatus().String())
 }
 
 func (tx *Txn) Done(status TxStatus) {
-    tx.mutex.Lock()
-
     assert.Must(status.Done())
     tx.SetStatusLocked(status)
 
-    tx.mutex.Unlock()
+    close(tx.done)
 
-    tx.cond.Broadcast()
     glog.V(10).Infof("Done txn(%s), status: '%s'", tx.String(), status.String())
 }
 
@@ -292,21 +273,13 @@ func (tx *Txn) WaitUntilDone(waiter *Txn) {
     assert.Must(tx != waiter)
     waiterDesc := waiter.String()
 
-    tx.mutex.Lock()
-
     glog.V(5).Infof("txn(%s) wait for txn(%s) to finish", waiterDesc, tx.String())
-    loopTimes := 0
-    for !tx.GetStatus().Done()  {
-        if loopTimes > 0 {
-            glog.V(10).Infof("txn(%s) waited once txn(%s) successfully", waiterDesc, tx.String())
-            glog.V(10).Infof("txn(%s) wait once for txn(%s) to finish", waiterDesc, tx.String())
-        }
-        tx.cond.Wait()
-        loopTimes++
-    }
-    glog.V(5).Infof("txn(%s) waited txn(%s) successfully", waiterDesc, tx.String())
 
-    tx.mutex.Unlock()
+    select {
+    case <- tx.done:
+    }
+
+    glog.V(5).Infof("txn(%s) waited txn(%s) successfully", waiterDesc, tx.String())
 }
 
 func (tx *Txn) GetCommitData() map[string]float64 {
@@ -324,7 +297,6 @@ func (tx *Txn) CheckFirstOp(ts *TimeServer) {
     if !tx.firstOpMet {
         tx.firstOpMet = true
         tx.timestamp.Set(ts.FetchTimestamp())
-        tx.cond.Broadcast()
     }
 }
 
