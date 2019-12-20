@@ -1,6 +1,7 @@
 package tcc
 
 import (
+    "container/list"
     "fmt"
     "reflect"
     "strconv"
@@ -72,6 +73,13 @@ func Min(a int64, b int64) int64 {
     return a
 }
 
+func MaxInt(a int, b int) int {
+    if a > b {
+        return a
+    }
+    return b
+}
+
 func Max(a int64, b int64) int64 {
     if a > b {
         return a
@@ -105,4 +113,14 @@ func Array2String(objs interface{}, strMapper func(interface{})string) string {
         strs[i] = strMapper(sa.Index(i).Interface())
     }
     return strings.Join(strs, ", ")
+}
+
+func txnListStr(l *list.List) string {
+    strs := make([]string, l.Len())
+    i := 0
+    for cur := l.Front(); cur != nil; cur = cur.Next() {
+        strs[i] = fmt.Sprintf("%d", cur.Value.(*Txn).GetTimestamp())
+        i++
+    }
+    return strings.Join(strs, "->")
 }

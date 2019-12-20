@@ -32,22 +32,22 @@ func TestTxEngineMVCCTO(t *testing.T) {
         }},
     ),
     NewTx(
-        []Op {{
-            key: "b",
-            typ: IncrMultiply,
-            operatorNum: 20,
-        }, {
-            key: "a",
-            typ: IncrAdd,
-            operatorNum: 10,
-        }},
+       []Op {{
+           key: "b",
+           typ: IncrMultiply,
+           operatorNum: 20,
+       }, {
+           key: "a",
+           typ: IncrAdd,
+           operatorNum: 10,
+       }},
     ),
     NewTx(
-        []Op {{
-            key: "a",
-            typ: WriteDirect,
-            operatorNum: 100,
-        }},
+       []Op {{
+           key: "a",
+           typ: WriteDirect,
+           operatorNum: 100,
+       }},
     ),
     }
 
@@ -75,18 +75,20 @@ func TestTxEngineMVCCTO(t *testing.T) {
     }
 
     var totalTime time.Duration
+    threadNum := MaxInt(len(newTxns) / 4, 4)
     round := 10000
+    glog.Infof("%d transactions in one round, %d threads, %d rounds", len(newTxns), threadNum, round)
     for i := 0; i < round; i++ {
-        glog.V(10).Infof("\nRound: %d\n", i)
-        duration, err := executeOneRoundMVCCTO(db, txns, initDBFunc, false)
+        glog.V(3).Infof("\nRound: %d\n", i)
+        duration, err := executeOneRoundMVCCTO(db, txns, initDBFunc, threadNum, false)
         totalTime+= duration
 
         if err != nil {
             t.Errorf(err.Error())
             return
         }
-        if i % 100 == 0 {
-            fmt.Printf("%d rounds finished\n", i)
+        if i % 1000 == 0 {
+            fmt.Printf("%d rounds finished\n", i + 1)
         }
     }
     fmt.Printf("\nCost %f seconds for %d rounds\n", float64(totalTime)/float64(time.Second), round)
@@ -221,39 +223,33 @@ func TestTxEngineMVCCTOProc(t *testing.T) {
     }
 
     var totalTime time.Duration
+    threadNum := MaxInt(len(newTxns) / 4, 4)
     round := 10000
+    glog.Infof("%d transactions in one round, %d threads, %d rounds", len(newTxns), threadNum, round)
     for i := 0; i < round; i++ {
-        glog.V(10).Infof("\nRound: %d\n", i)
-        duration, err := executeOneRoundMVCCTO(db, txns, initDBFunc, false)
+        glog.V(3).Infof("\nRound: %d\n", i)
+        duration, err := executeOneRoundMVCCTO(db, txns, initDBFunc, threadNum, false)
         totalTime+= duration
 
         if err != nil {
             t.Errorf(err.Error())
             return
         }
-        if i % 100 == 0 {
-            fmt.Printf("%d rounds finished\n", i)
+        if i % 1000 == 0 {
+            fmt.Printf("%d rounds finished\n", i + 1)
         }
     }
     fmt.Printf("\nCost %f seconds for %d rounds\n", float64(totalTime)/float64(time.Second), round)
 }
 
-func executeOneRoundMVCCTO(db *DB, txns []*Txn, initDBFunc func(*DB), logRes bool) (time.Duration, error) {
+func executeOneRoundMVCCTO(db *DB, txns []*Txn, initDBFunc func(*DB), threadNum int, logRes bool) (time.Duration, error) {
     initDBFunc(db)
     for _, txn := range txns {
         txn.ResetForTestOnly()
     }
 
-    //var newTxnsMutex sync.Mutex
-    //var dtTxns []*Txn
-    //te.AddPostCommitListener(func(txn *Txn) {
-    //    newTxnsMutex.Lock()
-    //    dtTxns = append(dtTxns, txn)
-    //    newTxnsMutex.Unlock()
-    //})
-
     start := time.Now()
-    te := NewTxEngineMVCCTO(db, 16, true, time.Nanosecond * 500)
+    te := NewTxEngineMVCCTO(db, threadNum, true, time.Nanosecond * 500)
     if err := te.ExecuteTxns(db, txns); err != nil {
         return 0, err
     }
@@ -266,16 +262,6 @@ func executeOneRoundMVCCTO(db *DB, txns []*Txn, initDBFunc func(*DB), logRes boo
            return 0, fmt.Errorf("head not correct")
         }
     }
-
-    //strMapper := func(obj interface{})string {
-    //    return fmt.Sprintf("{%s}", obj.(*Txn).String())
-    //}
-    //sort.Sort(TxnSliceSortByTxID(dtTxns))
-    //newStr := Array2String(newTxns, strMapper)
-    //dtStr := Array2String(dtTxns, strMapper)
-    //if newStr != dtStr {
-    //    return 0, fmt.Errorf("array not equal, exp \n%s, but met %s\n", dtStr, newStr)
-    //}
 
     res := db.Snapshot()
 

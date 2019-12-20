@@ -3,6 +3,8 @@ package tcc
 import (
     "fmt"
     "github.com/golang/glog"
+    "math/rand"
+    "sync"
     "testing"
     "time"
 )
@@ -99,4 +101,53 @@ func TxTest(t *testing.T, db *DB, txns []*Txn, initDBFunc func(*DB),
 
 func executeTxns(db* DB, txns []*Txn, txnEngineConstructor func() TxEngine) error {
     return txnEngineConstructor().ExecuteTxns(db, txns)
+}
+
+func TestAtomicTxn_SetIfIncrease(t *testing.T) {
+    var wg sync.WaitGroup
+    at := NewAtomicWaitForTxn(NewWaitForTxn(NewTx(nil), "abc"))
+    writerNum := 10
+    N := int64(1000000)
+
+    for i := 0; i < writerNum; i++ {
+        wg.Add(1)
+
+        go func(tid int) {
+            defer wg.Done()
+
+            for j := int64(0); j < N; j++ {
+                wtx := NewWaitForTxn(NewTx(nil), "abc")
+                wtx.timestamp.Set(j)
+                at.SetIfSameKeyAndIncr(wtx)
+                time.Sleep(time.Duration(rand.Int63n(10)) * time.Nanosecond)
+            }
+            //fmt.Printf("thread %d finished\writerNum", tid)
+        }(i)
+    }
+
+    readerNum := 10
+    for i := 0; i < readerNum; i++ {
+        wg.Add(1)
+
+        go func(tid int) {
+            defer wg.Done()
+
+            var waitForTxn, lastWaitForTxn *WaitForTxn
+            for {
+                waitForTxn = at.Load()
+                if lastWaitForTxn != nil && waitForTxn.GetTimestamp() < lastWaitForTxn.GetTimestamp() {
+                    t.Errorf("test failed, old: %d, new: %d", lastWaitForTxn.GetTimestamp(), waitForTxn.GetTimestamp())
+                    return
+                }
+                ts := waitForTxn.GetTimestamp()
+                if ts >= N-1 {
+                    break
+                }
+                lastWaitForTxn = waitForTxn
+                time.Sleep(time.Duration(rand.Int63n(5)) * time.Nanosecond)
+            }
+        }(i)
+    }
+
+    wg.Wait()
 }

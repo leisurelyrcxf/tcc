@@ -44,19 +44,3 @@ func (lm *LockManager) RUnlock(key string) {
     lm.rwMutexes[slotIdx].RUnlock()
 }
 
-func (lm *LockManager) UpgradeLock(key string) {
-    if lm == nil {
-        return
-    }
-    slotIdx := lm.hash(key)
-    lm.mutexes[slotIdx].Lock()
-}
-
-func (lm *LockManager) DegradeLock(key string) {
-    if lm == nil {
-        return
-    }
-    slotIdx := lm.hash(key)
-    lm.mutexes[slotIdx].Unlock()
-}
-

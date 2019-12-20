@@ -52,6 +52,14 @@ func TestTxEngineTimestampOrdering(t *testing.T) {
     ),
     }
 
+    e := 1
+    newTxns := make([]*Txn, len(txns) * e)
+    for i := range newTxns {
+        newTxns[i] = txns[i%4].Clone()
+        newTxns[i].ID = TxnIDCounter.Add(1)
+    }
+    txns = nil
+
     initDBFunc := func (db *DB) {
         db.SetUnsafe("a", 0, 0, nil)
         db.SetUnsafe("b", 1, 0, nil)
@@ -59,18 +67,20 @@ func TestTxEngineTimestampOrdering(t *testing.T) {
     }
 
     var totalTime time.Duration
-    round := 100000
+    round := 10000
+    threadNum := MaxInt(len(newTxns) / 4, 4)
+    glog.Infof("%d transactions in one round, %d threads, %d rounds", len(newTxns), threadNum, round)
     for i := 0; i < round; i++ {
         glog.V(10).Infof("\nRound: %d\n", i)
-        duration, err := executeOneRound(db, txns, initDBFunc)
+        duration, err := executeOneRound(db, newTxns, initDBFunc)
         totalTime+= duration
 
         if err != nil {
             t.Errorf(err.Error())
             return
         }
-        if i % 100 == 0 {
-            fmt.Printf("%d rounds finished\n", i)
+        if i % 1000 == 0 {
+            fmt.Printf("%d rounds finished\n", i + 1)
         }
     }
     fmt.Printf("\nCost %f seconds for %d rounds\n", float64(totalTime)/float64(time.Second), round)

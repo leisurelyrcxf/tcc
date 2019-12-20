@@ -158,28 +158,22 @@ func (db *DB) Get(key string) (float64, error) {
     return 0.0, KeyNotExist
 }
 
-func (db *DB) mustGetTreeMapValue(key string, holdsWriteLock bool) DBVersionedValues {
-    val, ok := db.values.Get(key)
-    if ok {
-        return val.(DBVersionedValues)
-    }
-
-    if !holdsWriteLock {
-        db.lm.UpgradeLock(key)
-        defer db.lm.DegradeLock(key)
-    }
-
-    val, ok = db.values.Get(key)
-    if ok {
-        return val.(DBVersionedValues)
-    }
-    vvs := NewDBVersionedValues()
-    db.values.Set(key, vvs)
-    return vvs
-}
-
 func (db *DB) SetMVCC(key string, val float64, writtenTxn *Txn, holdsWriteLock bool) {
-    vvs := db.mustGetTreeMapValue(key, holdsWriteLock)
+    if !holdsWriteLock {
+        db.values.GetLazy(key, func()interface{} {
+            return NewDBVersionedValues()
+        }).(DBVersionedValues).Put(writtenTxn.GetTimestamp(), NewDBValue(val, writtenTxn))
+        return
+    }
+
+    var vvs DBVersionedValues
+    vvsObj, ok := db.values.Get(key)
+    if !ok {
+        vvs = NewDBVersionedValues()
+        db.values.Set(key, vvs)
+    } else {
+        vvs = vvsObj.(DBVersionedValues)
+    }
     vvs.Put(writtenTxn.GetTimestamp(), NewDBValue(val, writtenTxn))
 }
 

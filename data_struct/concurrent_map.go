@@ -17,6 +17,29 @@ func (cmp *concurrentMapPartition) get(key string) (interface{}, bool) {
 	return val, ok
 }
 
+func (cmp *concurrentMapPartition) getLazy(key string, f func()interface{}) interface{} {
+	cmp.mutex.RLock()
+	val, ok := cmp.m[key]
+	if ok {
+		cmp.mutex.RUnlock()
+		return val
+	}
+	cmp.mutex.RUnlock()
+
+	cmp.mutex.Lock()
+	defer cmp.mutex.Unlock()
+
+	val, ok = cmp.m[key]
+	if ok {
+		return val
+	}
+
+	val = f()
+	cmp.m[key] = val
+
+	return val
+}
+
 func (cmp *concurrentMapPartition) set(key string, val interface{}) {
 	cmp.mutex.Lock()
 	defer cmp.mutex.Unlock()
@@ -74,8 +97,20 @@ func (cmp *ConcurrentMap) RUnlock() {
 	}
 }
 
+func (cmp *ConcurrentMap) MustGet(key string) interface{} {
+	val, ok := cmp.Get(key)
+	if !ok {
+		panic("key not exists")
+	}
+	return val
+}
+
 func (cmp *ConcurrentMap) Get(key string) (interface{}, bool) {
 	return cmp.partitions[cmp.hash(key)].get(key)
+}
+
+func (cmp *ConcurrentMap) GetLazy(key string, f func()interface{}) interface{} {
+	return cmp.partitions[cmp.hash(key)].getLazy(key, f)
 }
 
 func (cmp *ConcurrentMap) Set(key string, val interface{}) {

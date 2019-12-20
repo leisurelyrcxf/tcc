@@ -101,39 +101,39 @@ func (te *TxEngineTO) getMaxWriteTxForKey(key string) *Txn {
     return getMaxTxForKey(key, &te.mw)
 }
 
-func putTxForKey(key string, tx *Txn, m *data_struct.ConcurrentMap, lm *LockManager) {
-    obj, _ := m.Get(key)
-
-    var tm *data_struct.ConcurrentTreeMap
-    if obj == nil {
-        lm.UpgradeLock(key)
-
-        obj, _ = m.Get(key)
-        if obj == nil {
-            tm = data_struct.NewConcurrentTreeMap(func(a, b interface{}) int {
+func putTxForKey(key string, tx *Txn, m *data_struct.ConcurrentMap, holdsWriteLock bool) {
+    if !holdsWriteLock {
+        m.GetLazy(key, func()interface{} {
+            return data_struct.NewConcurrentTreeMap(func(a, b interface{}) int {
                 ta := a.(*Txn)
                 tb := b.(*Txn)
                 return int(ta.GetTimestamp() - tb.GetTimestamp())
             })
-            m.Set(key, tm)
-        } else {
-            tm = obj.(*data_struct.ConcurrentTreeMap)
-        }
-
-        lm.DegradeLock(key)
-    } else {
-        tm = obj.(*data_struct.ConcurrentTreeMap)
+        }).(*data_struct.ConcurrentTreeMap).Put(tx, nil)
+        return
     }
 
+    var tm *data_struct.ConcurrentTreeMap
+    tmObj, ok := m.Get(key)
+    if !ok {
+        tm = data_struct.NewConcurrentTreeMap(func(a, b interface{}) int {
+            ta := a.(*Txn)
+            tb := b.(*Txn)
+            return int(ta.GetTimestamp() - tb.GetTimestamp())
+        })
+        m.Set(key, tm)
+    } else {
+        tm = tmObj.(*data_struct.ConcurrentTreeMap)
+    }
     tm.Put(tx, nil)
 }
 
-func (te *TxEngineTO) putReadTxForKey(key string, tx *Txn, lm *LockManager) {
-    putTxForKey(key, tx, &te.mr, lm)
+func (te *TxEngineTO) putReadTxForKey(key string, tx *Txn) {
+    putTxForKey(key, tx, &te.mr, false)
 }
 
 func (te *TxEngineTO) putWriteTxForKey(key string, tx *Txn) {
-    putTxForKey(key, tx, &te.mw, nil)
+    putTxForKey(key, tx, &te.mw, true)
 }
 
 func (te *TxEngineTO) AddPostCommitListener(cb func(*Txn)) {
@@ -341,9 +341,9 @@ func (te *TxEngineTO) get(db *DB, txn *Txn, key string) (float64, error) {
     // No need to check cause if we read that version, it is not possible to rollback.
     //writtenTxn := vv.WrittenTxn
     //if writtenTxn != nil && !writtenTxn.GetStatus().Done() {
-    //    writtenTxn.WaitFor(txn)
+    //    writtenTxn.txn(txn)
     //}
-    te.putReadTxForKey(key, txn, db.lm)
+    te.putReadTxForKey(key, txn)
     glog.V(10).Infof("txn(%s) got value %f for key '%s'", txn.String(), vv.Value, key)
     return vv.Value, nil
 }

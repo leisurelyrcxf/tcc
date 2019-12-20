@@ -52,7 +52,6 @@ func (e *TxEngineExecutorMVCCTO) Set(key string, val float64, ctx expr.Context) 
 type TxEngineMVCCTO struct {
     threadNum           int
     mr                  data_struct.ConcurrentMap
-    lm                  *LockManager
     txns                chan *Txn
     errs                chan *TxnError
     retryWaitInterval   time.Duration
@@ -64,7 +63,6 @@ func NewTxEngineMVCCTO(db *DB, threadNum int, enableCache bool, retryWaitInterva
     te := &TxEngineMVCCTO{
         threadNum:         threadNum,
         mr:                data_struct.NewConcurrentMap(1024),
-        lm:                db.lm,
         txns:              make(chan *Txn, threadNum),
         retryWaitInterval: retryWaitInterval,
         errs:              make(chan *TxnError, threadNum * 100),
@@ -77,9 +75,9 @@ func compactKey(key string, version int64) string {
     return fmt.Sprintf("%s\r\n%d", key, version)
 }
 
-func getMaxTxForKeyAndVersion(key string, version int64, m *data_struct.ConcurrentMap) *Txn {
+func (te *TxEngineMVCCTO) getMaxReadTxForKeyAndVersion(key string, version int64) *Txn {
     newKey := compactKey(key, version)
-    if tmObj, ok := m.Get(newKey); !ok {
+    if tmObj, ok := te.mr.Get(newKey); !ok {
         return TxNaN
     } else {
         tm := tmObj.(*data_struct.ConcurrentTreeMap)
@@ -93,40 +91,15 @@ func getMaxTxForKeyAndVersion(key string, version int64, m *data_struct.Concurre
     }
 }
 
-func (te *TxEngineMVCCTO) getMaxReadTxForKeyAndVersion(key string, version int64) *Txn {
-    return getMaxTxForKeyAndVersion(key, version, &te.mr)
-}
-
-func putTxForKeyAndVersion(key string, version int64, tx *Txn, m *data_struct.ConcurrentMap, lm *LockManager) {
+func (te *TxEngineMVCCTO) putReadTxForKeyAndVersion(key string, version int64, tx *Txn) {
     newKey := compactKey(key, version)
-    tmObj, _ := m.Get(newKey)
-
-    var tm *data_struct.ConcurrentTreeMap
-    if tmObj == nil {
-        lm.UpgradeLock(newKey)
-
-        tmObj, _ = m.Get(newKey)
-        if tmObj == nil {
-            tm = data_struct.NewConcurrentTreeMap(func(a, b interface{}) int {
-                ta := a.(*Txn)
-                tb := b.(*Txn)
-                return int(ta.GetTimestamp() - tb.GetTimestamp())
-            })
-            m.Set(newKey, tm)
-        } else {
-            tm = tmObj.(*data_struct.ConcurrentTreeMap)
-        }
-
-        lm.DegradeLock(newKey)
-    } else {
-        tm = tmObj.(*data_struct.ConcurrentTreeMap)
-    }
-
-    tm.Put(tx, nil)
-}
-
-func (te *TxEngineMVCCTO) putReadTxForKeyAndVersion(key string, version int64, tx *Txn, lm *LockManager) {
-    putTxForKeyAndVersion(key, version, tx, &te.mr, lm)
+    te.mr.GetLazy(newKey, func()interface{} {
+        return data_struct.NewConcurrentTreeMap(func(a, b interface{}) int {
+            ta := a.(*Txn)
+            tb := b.(*Txn)
+            return int(ta.GetTimestamp() - tb.GetTimestamp())
+        })
+    }).(*data_struct.ConcurrentTreeMap).Put(tx, nil)
 }
 
 func (te *TxEngineMVCCTO) AddPostCommitListener(cb func(*Txn)) {
@@ -273,8 +246,11 @@ func (te *TxEngineMVCCTO) get(db *DB, txn *Txn, key string) (float64, error) {
     ts := txn.GetTimestamp()
     glog.V(10).Infof("txn(%s) want to get key '%s'", txn.String(), key)
 
-    te.lm.RLock(key)
-    defer te.lm.RUnlock(key)
+    db.lm.RLock(key)
+    locked := true
+    defer func() {
+        if locked { db.lm.RUnlock(key) }
+    }()
 
     for {
         dbVal, err := db.GetDBValueMaxVersionBelow(key, ts)
@@ -287,7 +263,7 @@ func (te *TxEngineMVCCTO) get(db *DB, txn *Txn, key string) (float64, error) {
         stats := dbValWrittenTxn.GetStatus()
 
         if dbValWrittenTxn == TxNaN || stats.Succeeded() {
-            te.putReadTxForKeyAndVersion(key, dbVal.Version, txn, db.lm)
+            te.putReadTxForKeyAndVersion(key, dbVal.Version, txn)
             txn.AddReadVersion(key, dbVal.Version)
             glog.V(10).Infof("txn(%s) got value(%f, %d) for key '%s'", txn.String(), dbVal.Value, dbVal.Version, key)
             return dbVal.Value, nil
@@ -300,9 +276,14 @@ func (te *TxEngineMVCCTO) get(db *DB, txn *Txn, key string) (float64, error) {
         //return 0, txnErrConflict
 
         db.lm.RUnlock(key)
-        dbValWrittenTxn.AddWaiter(key, txn, db.lm)
-        txn.Wait()
+        locked = false
+
+        if dbValWrittenTxn.AddWaiter(key, txn, false) {
+            txn.Wait()
+        }
+
         db.lm.RLock(key)
+        locked = true
     }
 }
 
@@ -313,8 +294,8 @@ func (te *TxEngineMVCCTO) set(db *DB, txn *Txn, key string, val float64) error {
 
     readVersion, readVersionExist := txn.readVersions[key]
 
-    te.lm.Lock(key)
-    defer te.lm.Unlock(key)
+    db.lm.Lock(key)
+    defer db.lm.Unlock(key)
 
     if !readVersionExist {
         dbVal, err := db.GetDBValueMaxVersionBelow(key, ts)
