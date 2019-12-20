@@ -267,7 +267,7 @@ func (tx *Txn) ClearContext() {
 func (tx *Txn) ResetForTestOnly() {
     tx.timestamp.Set(0)
 
-    tx.SetStatusLocked(TxStatusInitialized)
+    tx.SetStatus(TxStatusInitialized)
 
     tx.firstOpMet = false
 
@@ -311,7 +311,7 @@ func (tx *Txn) GetStatus() TxStatus {
     return TxStatus(tx.status.Get())
 }
 
-func (tx *Txn) SetStatusLocked(status TxStatus) {
+func (tx *Txn) SetStatus(status TxStatus) {
     tx.status.Set(int32(status))
 }
 
@@ -322,7 +322,7 @@ func (tx *Txn) Start(ts *TimeServer, tid int, waitInterval time.Duration) {
     assert.Must(tx.GetStatus() == TxStatusInitialized)
     assert.Must(!tx.firstOpMet)
 
-    tx.SetStatusLocked(TxStatusPending)
+    tx.SetStatus(TxStatusPending)
 
     tx.waitingListElements = data_struct.NewConcurrentMap(8)
     tx.waitingFor = NewAtomicWaitForTxn(nil)
@@ -338,7 +338,7 @@ func (tx *Txn) Start(ts *TimeServer, tid int, waitInterval time.Duration) {
 
 func (tx *Txn) Done(status TxStatus) {
     assert.Must(status.Done())
-    tx.SetStatusLocked(status)
+    tx.SetStatus(status)
 
     close(tx.done)
 
@@ -466,11 +466,6 @@ func (tx *Txn) gcBackwardLocked(key string, l *list.List, cur *list.Element) *li
         //fmt.Println()
     }
     return cur
-}
-
-func (tx *Txn) MustGetListElement(key string) *data_struct.ConcurrentListElement {
-    val, _ := tx.waitingListElements.Get(key)
-    return val.(*data_struct.ConcurrentListElement)
 }
 
 func (tx *Txn) SetListElement(key string, ele *data_struct.ConcurrentListElement) {
