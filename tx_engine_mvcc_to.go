@@ -292,11 +292,12 @@ func (te *TxEngineMVCCTO) get(db *DB, txn *Txn, key string) (float64, error) {
             continue
         }
 
-        // TODO return directly
-        return 0, txnErrConflict
+        // return directly
+        //return 0, txnErrConflict
 
         db.lm.RUnlock(key)
-        dbValWrittenTxn.WaitUntilDone(txn)
+        dbValWrittenTxn.AddWaiter(key, txn, db.lm)
+        txn.Wait()
         db.lm.RLock(key)
     }
 }

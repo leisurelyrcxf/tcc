@@ -321,7 +321,7 @@ func (te *TxEngineTO) get(db *DB, txn *Txn, key string) (float64, error) {
         }
 
         db.lm.RUnlock(key)
-        maxWriteTxn.WaitUntilDone(txn)
+        txn.WaitFor(maxWriteTxn)
         db.lm.RLock(key)
     }
 
@@ -337,7 +337,7 @@ func (te *TxEngineTO) get(db *DB, txn *Txn, key string) (float64, error) {
     // No need to check cause if we read that version, it is not possible to rollback.
     //writtenTxn := vv.WrittenTxn
     //if writtenTxn != nil && !writtenTxn.GetStatus().Done() {
-    //    writtenTxn.WaitUntilDone(txn)
+    //    writtenTxn.WaitFor(txn)
     //}
     te.putReadTxForKey(key, txn, db.lm)
     glog.V(10).Infof("txn(%s) got value %f for key '%s'", txn.String(), vv.Value, key)

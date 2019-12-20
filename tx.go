@@ -1,9 +1,13 @@
 package tcc
 
 import (
+    "container/list"
     "fmt"
     "github.com/golang/glog"
+    "math"
+    "sync/atomic"
     "tcc/assert"
+    "tcc/data_struct"
     "tcc/expr"
     "tcc/sync2"
 )
@@ -96,7 +100,9 @@ type Txn struct {
 
     ctx          Context
 
-    done         chan struct{}
+    waiters    *data_struct.ConcurrentMap
+    waitingFor atomic.Value
+    done       chan struct{}
 }
 
 const TxIDNaN = -1
@@ -166,6 +172,9 @@ func (tx *Txn) GC() {
     tx.commitData = nil
     tx.readVersions = nil
     tx.ctx = nil
+    // Dangerous don't do this
+    //tx.done = nil
+    //tx.wakeup = nil
 }
 
 func (tx *Txn) Clear() {
@@ -248,7 +257,9 @@ func (tx *Txn) Start(ts int64) {
     tx.timestamp.Set(ts)
     tx.SetStatusLocked(TxStatusPending)
 
-    tx.done = make(chan struct{})
+    c := data_struct.NewConcurrentMap(1024)
+    tx.done     = make(chan struct{})
+    tx.waiters  = &c
 
     glog.V(10).Infof("Start txn(%s), status: '%s'", tx.String(), tx.GetStatus().String())
 }
@@ -264,22 +275,88 @@ func (tx *Txn) Done(status TxStatus) {
 
 func (tx *Txn) GetTimestamp() int64 {
     if tx == nil {
-        return 0
+        return math.MaxInt64
     }
     return tx.timestamp.Get()
 }
 
-func (tx *Txn) WaitUntilDone(waiter *Txn) {
-    assert.Must(tx != waiter)
-    waiterDesc := waiter.String()
-
-    glog.V(5).Infof("txn(%s) wait for txn(%s) to finish", waiterDesc, tx.String())
-
-    select {
-    case <- tx.done:
+func (tx *Txn) MustGetWaitersOfKey(key string, lm *LockManager) *list.List {
+    var waitersOfKey *list.List
+    lObj, ok := tx.waiters.Get(key)
+    if ok {
+        return lObj.(*list.List)
     }
 
-    glog.V(5).Infof("txn(%s) waited txn(%s) successfully", waiterDesc, tx.String())
+    lm.UpgradeLock(key)
+    defer lm.DegradeLock(key)
+
+    lObj, ok = tx.waiters.Get(key)
+    if ok {
+        return lObj.(*list.List)
+    }
+
+    waitersOfKey = list.New()
+    // tx is always the head.
+    waitersOfKey.PushBack(tx)
+
+    tx.waiters.Set(key, waitersOfKey)
+
+    return waitersOfKey
+}
+
+func (tx *Txn) AddWaiter(key string, waiter *Txn, lm *LockManager) {
+    waitersOfKey := tx.MustGetWaitersOfKey(key, lm)
+    after, before := tx.insertWaiterForKey(waitersOfKey, waiter)
+    //assert.Must(waiter.GetTimestamp() > before.GetTimestamp() && waiter.GetTimestamp() < after.GetTimestamp())
+    waiter.SetWaitingFor(before)
+    if after != nil {
+      after.SetWaitingFor(waiter)
+    }
+}
+
+func (tx *Txn) insertWaiterForKey(waiters *list.List, waiter *Txn) (after *Txn, before *Txn) {
+    var cur, prev *list.Element
+    for cur, prev = waiters.Front(), nil; cur != nil; cur, prev = cur.Next(), cur {
+        if cur.Value.(*Txn).GetTimestamp() > waiter.GetTimestamp() {
+            waiters.InsertBefore(waiter, cur)
+            return cur.Value.(*Txn), prev.Value.(*Txn)
+        }
+    }
+    waiters.InsertAfter(waiter, prev)
+    return nil, prev.Value.(*Txn)
+}
+
+func (tx *Txn) SetWaitingFor(waitingFor *Txn) {
+    tx.waitingFor.Store(waitingFor)
+}
+
+func (tx *Txn) Wait() {
+    waiterDesc := tx.String()
+
+    var waited *Txn
+    for {
+        waitingFor := tx.waitingFor.Load().(*Txn)
+        if waitingFor == waited {
+            return
+        }
+
+        //assert.Must(waited == nil || waited.GetTimestamp() < waitingFor.GetTimestamp())
+
+        waitingForDesc := waitingFor.String()
+        glog.V(5).Infof("txn(%s) wait for txn(%s) to finish", waiterDesc, waitingForDesc)
+        <-waitingFor.done
+        waited = waitingFor
+        glog.V(5).Infof("txn(%s) waited txn(%s) successfully", waiterDesc, waitingForDesc)
+    }
+}
+
+func (tx *Txn) WaitFor(waitFor *Txn) {
+    assert.Must(tx.GetTimestamp() > waitFor.GetTimestamp())
+    waiterDesc := tx.String()
+    waitingForDesc := waitFor.String()
+    glog.V(5).Infof("txn(%s) wait for txn(%s) to finish", waiterDesc, waitingForDesc)
+    <-waitFor.done
+    glog.V(5).Infof("txn(%s) waited txn(%s) successfully", waiterDesc, waitingForDesc)
 }
 
 func (tx *Txn) GetCommitData() map[string]float64 {
