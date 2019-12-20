@@ -303,18 +303,23 @@ func (te *TxEngineMVCCTO) set(db *DB, txn *Txn, key string, val float64) error {
     ts := txn.GetTimestamp()
     glog.V(10).Infof("txn(%s) want to set key '%s' to value(%f, %d)", txn.String(), key, val, ts)
 
-    readVersion, ok := txn.readVersions[key]
-    if !ok {
-        _, err := te.get(db, txn, key)
-        if err != nil {
-            return err
-        }
-        readVersion, ok = txn.readVersions[key]
-        assert.Must(ok)
-    }
+    readVersion, readVersionExist := txn.readVersions[key]
 
     te.lm.Lock(key)
     defer te.lm.Unlock(key)
+
+    if !readVersionExist {
+        dbVal, err := db.GetDBValueMaxVersionBelow(key, ts)
+        if err != nil {
+            return NewTxnError(err,false)
+        }
+        readVersion = dbVal.Version
+    } else {
+        // TODO can be removed
+        dbVal, err := db.GetDBValueMaxVersionBelow(key, ts)
+        assert.MustNoError(err)
+        assert.Must(dbVal.Version == readVersion)
+    }
 
     // Write-read conflict
     if ts < te.getMaxReadTxForKeyAndVersion(key, readVersion).GetTimestamp() {
