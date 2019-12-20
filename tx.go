@@ -483,8 +483,9 @@ func (tx *Txn) MustSetWaitingFor(key string, waitingFor *WaitForTxn) {
 }
 
 func (tx *Txn) SwitchWaitingFor(key string, newWaitingFor *WaitForTxn) {
-    tx.waitingFor.SetIfSameKeyAndIncr(newWaitingFor)
-    tx.Wakeup()
+    if tx.waitingFor.SetIfSameKeyAndIncr(newWaitingFor) {
+        tx.Wakeup()
+    }
 }
 
 func (tx *Txn) Wakeup() {

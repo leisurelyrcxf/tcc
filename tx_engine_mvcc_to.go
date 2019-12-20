@@ -281,6 +281,7 @@ func (te *TxEngineMVCCTO) get(db *DB, txn *Txn, key string) (float64, error) {
         if dbValWrittenTxn.AddWaiter(key, txn, false) {
             txn.Wait()
         }
+        //txn.WaitFor(dbValWrittenTxn)
 
         db.lm.RLock(key)
         locked = true
