@@ -60,11 +60,11 @@ type TxEngineTO struct {
     txns                chan *Txn
     errs                chan *TxnError
     postCommitListeners []func(*Txn)
-    startWaitInterval   time.Duration
+    retryWaitInterval   time.Duration
     e                   *TxEngineExecutorTO
 }
 
-func NewTxEngineTO(db *DB, threadNum int, lm *LockManager, enableCache bool, startWaitInterval time.Duration) *TxEngineTO {
+func NewTxEngineTO(db *DB, threadNum int, lm *LockManager, enableCache bool, retryWaitInterval time.Duration) *TxEngineTO {
     te := &TxEngineTO{
         threadNum:         threadNum,
         mw:                data_struct.NewConcurrentMap(1024),
@@ -72,7 +72,7 @@ func NewTxEngineTO(db *DB, threadNum int, lm *LockManager, enableCache bool, sta
         lm:                lm,
         txns:              make(chan *Txn, threadNum),
         errs:              make(chan *TxnError, threadNum * 100),
-        startWaitInterval: startWaitInterval,
+        retryWaitInterval: retryWaitInterval,
     }
     te.e = NewTxEngineExecutorTO(te, db, enableCache)
     return te
@@ -180,19 +180,21 @@ func (te *TxEngineTO) executeTxnsSingleThread(db *DB, tid int) error {
 }
 
 func (te *TxEngineTO) executeSingleTx(db *DB, tx *Txn, tid int) error {
+    var startWaitInterval time.Duration
     for {
-        err := te._executeSingleTx(db, tx, tid)
+        err := te._executeSingleTx(db, tx, tid, startWaitInterval)
         if err != nil && err.(*TxnError).IsRetryable() {
             tx = tx.Clone()
+            startWaitInterval = te.retryWaitInterval
             continue
         }
         return err
     }
 }
 
-func (te *TxEngineTO) _executeSingleTx(db *DB, txn *Txn, tid int) (err error) {
+func (te *TxEngineTO) _executeSingleTx(db *DB, txn *Txn, tid int, startWaitInterval time.Duration) (err error) {
     // Assign a new timestamp.
-    txn.Start(db.ts, tid, te.startWaitInterval)
+    txn.Start(db.ts, tid, startWaitInterval)
 
     defer func() {
         if err != nil {

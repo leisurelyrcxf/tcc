@@ -55,18 +55,18 @@ type TxEngineMVCCTO struct {
     lm                  *LockManager
     txns                chan *Txn
     errs                chan *TxnError
-    startWaitInterval   time.Duration
+    retryWaitInterval   time.Duration
     postCommitListeners []func(*Txn)
     e                   *TxEngineExecutorMVCCTO
 }
 
-func NewTxEngineMVCCTO(db *DB, threadNum int, enableCache bool, startWaitInterval time.Duration) *TxEngineMVCCTO {
+func NewTxEngineMVCCTO(db *DB, threadNum int, enableCache bool, retryWaitInterval time.Duration) *TxEngineMVCCTO {
     te := &TxEngineMVCCTO{
         threadNum:         threadNum,
         mr:                data_struct.NewConcurrentMap(1024),
         lm:                db.lm,
         txns:              make(chan *Txn, threadNum),
-        startWaitInterval: startWaitInterval,
+        retryWaitInterval: retryWaitInterval,
         errs:              make(chan *TxnError, threadNum * 100),
     }
     te.e = NewTxEngineExecutorMVCCTO(te, db, enableCache)
@@ -173,19 +173,21 @@ func (te *TxEngineMVCCTO) executeTxnThreadFunc(db *DB, tid int) error {
 }
 
 func (te *TxEngineMVCCTO) executeSingleTx(db *DB, tx *Txn, tid int) error {
+    var startWaitInterval time.Duration
     for {
-        err := te._executeSingleTx(db, tx, tid)
+        err := te._executeSingleTx(db, tx, tid, startWaitInterval)
         if err != nil && err.(*TxnError).IsRetryable() {
             tx = tx.Clone()
+            startWaitInterval = te.retryWaitInterval
             continue
         }
         return err
     }
 }
 
-func (te *TxEngineMVCCTO) _executeSingleTx(db *DB, txn *Txn, tid int) (err error) {
+func (te *TxEngineMVCCTO) _executeSingleTx(db *DB, txn *Txn, tid int, startWaitInterval time.Duration) (err error) {
     // Assign a new timestamp.
-    txn.Start(db.ts, tid, te.startWaitInterval)
+    txn.Start(db.ts, tid, startWaitInterval)
 
     defer func() {
         if err != nil {
@@ -294,8 +296,6 @@ func (te *TxEngineMVCCTO) get(db *DB, txn *Txn, key string) (float64, error) {
         if stats.HasError() {
             continue
         }
-
-        //return 0, txnErrConflict
 
         db.lm.RUnlock(key)
         dbValWrittenTxn.AddWaiter(key, txn, db.lm)
