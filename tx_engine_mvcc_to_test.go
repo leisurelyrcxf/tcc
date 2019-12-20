@@ -200,7 +200,6 @@ func TestTxEngineMVCCTOProc(t *testing.T) {
     newTxns := make([]*Txn, len(txns)*e)
     for i := range newTxns {
         newTxns[i] = txns[i%2].Clone()
-        newTxns[i].Keys = []string{"a", "b"}
     }
     txns = newTxns
 
@@ -217,7 +216,7 @@ func TestTxEngineMVCCTOProc(t *testing.T) {
     round := 10000
     for i := 0; i < round; i++ {
         glog.V(10).Infof("\nRound: %d\n", i)
-        duration, err := executeOneRoundMVCCTO(db, txns, initDBFunc, true)
+        duration, err := executeOneRoundMVCCTO(db, txns, initDBFunc, false)
         totalTime+= duration
 
         if err != nil {

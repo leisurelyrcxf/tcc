@@ -209,16 +209,18 @@ func (te *TxEngineMVCCTO) commit(db *DB, txn *Txn) {
 }
 
 func (te *TxEngineMVCCTO) rollback(db *DB, txn *Txn, reason error) {
-    var retryLaterStr string
-    if reason.(*TxnError).IsRetryable() {
-        retryLaterStr = ", retry later"
+    if glog.V(10) {
+        var retryLaterStr string
+        if reason.(*TxnError).IsRetryable() {
+            retryLaterStr = ", retry later"
+        }
+        glog.Infof("rollback txn(%s) due to error '%s'%s", txn.String(), reason.Error(), retryLaterStr)
     }
     ts := txn.GetTimestamp()
     for key, _ := range txn.GetCommitData() {
         db.MustRemoveVersion(key, ts)
     }
     txn.Clear()
-    glog.V(10).Infof("rollback txn(%s) due to error '%s'%s", txn.String(), reason.Error(), retryLaterStr)
     if reason == txnErrStaleWrite {
         txn.Done(TxStatusFailedRetryable)
     } else if reason == txnErrConflict {
