@@ -51,6 +51,14 @@ func TestTxEngineMVCCTO(t *testing.T) {
     ),
     }
 
+    e := 10
+    newTxns := make([]*Txn, len(txns) * e)
+    for i := range newTxns {
+        newTxns[i] = txns[i%4].Clone()
+        newTxns[i].ID = TxnIDCounter.Add(1)
+    }
+    txns = newTxns
+
     initDBFunc := func (db *DB) {
         db.values.ForEachStrict(func(_ string, vv interface{}) {
             vv.(DBVersionedValues).Clear()
@@ -245,7 +253,7 @@ func executeOneRoundMVCCTO(db *DB, txns []*Txn, initDBFunc func(*DB), logRes boo
     //})
 
     start := time.Now()
-    te := NewTxEngineMVCCTO(db, 4, true, time.Nanosecond * 500)
+    te := NewTxEngineMVCCTO(db, 16, true, time.Nanosecond * 500)
     if err := te.ExecuteTxns(db, txns); err != nil {
         return 0, err
     }

@@ -297,6 +297,8 @@ func (te *TxEngineMVCCTO) get(db *DB, txn *Txn, key string) (float64, error) {
             continue
         }
 
+        //return 0, txnErrConflict
+
         db.lm.RUnlock(key)
         dbValWrittenTxn.AddWaiter(key, txn, db.lm)
         txn.Wait()

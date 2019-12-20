@@ -77,7 +77,7 @@ func (s TxStatus) HasError() bool {
     return s == TxStatusFailed || s == TxStatusFailedRetryable
 }
 
-var Counter = sync2.NewAtomicInt64(0)
+var TxnIDCounter = sync2.NewAtomicInt64(0)
 
 type Context map[string]float64
 
@@ -125,7 +125,7 @@ var TxNaN = &Txn{
 
 func NewTx(ops []Op) *Txn {
     txn := &Txn{
-        ID:  Counter.Add(1),
+        ID:  TxnIDCounter.Add(1),
         Ops: ops,
 
         commitData:   make(map[string]float64),
