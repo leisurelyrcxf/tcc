@@ -374,21 +374,21 @@ func (tx *Txn) GetTimestamp() int64 {
 var ErrStaleRead = fmt.Errorf("stale read, should retry")
 
 // Only waiter is owned by this thread.
-func (tx *Txn) AddWaiter(key string, waiter *Txn, holdsWriteLock bool) (hasWaitForTxn bool) {
+func (tx *Txn) WaitFor(key string, waitingFor *Txn, holdsWriteLock bool) {
     assert.Must(!holdsWriteLock)
     var after, before *Txn
     var err error
     for {
-        txWaitingListEle := tx.waitingListElements.GetLazy(key, func()interface{} {
+        txWaitingListEle := waitingFor.waitingListElements.GetLazy(key, func()interface{} {
             l := data_struct.NewConcurrentList()
-            ele := l.PushBack(tx)
+            ele := l.PushBack(waitingFor)
             cle := data_struct.NewConcurrentListElement(l, ele)
             return cle
         }).(*data_struct.ConcurrentListElement)
 
-        after, _, before, _, err = tx.insertWaiterOnKey(txWaitingListEle, key, waiter)
+        after, _, before, _, err = insertWaiterOnKey(txWaitingListEle, key, tx, waitingFor)
         if err == ErrStaleRead {
-            if tx.GetStatus().Done() || tx.waitingFor.Load().GetKey() != key {
+            if waitingFor.GetStatus().Done() || waitingFor.waitingFor.Load().GetKey() != key {
                 break
             }
             assert.Must(false)
@@ -396,20 +396,78 @@ func (tx *Txn) AddWaiter(key string, waiter *Txn, holdsWriteLock bool) (hasWaitF
         }
         break
     }
-    if !((before == nil || waiter.GetTimestamp() > before.GetTimestamp()) && (after == nil || waiter.GetTimestamp() < after.GetTimestamp())) {
+    if !((before == nil || tx.GetTimestamp() > before.GetTimestamp()) && (after == nil || tx.GetTimestamp() < after.GetTimestamp())) {
         assert.Must(false)
     }
 
-    hasWaitForTxn = before != nil
     if after != nil {
         // Long op.
-        after.SwitchWaitingFor(key, NewWaitForTxn(waiter, key, after))
+        after.SwitchWaitingFor(key, NewWaitForTxn(tx, key, after))
+    }
+    if before != nil {
+        tx.wait()
     }
     return
 }
 
-func (tx *Txn) insertWaiterOnKey(begin *data_struct.ConcurrentListElement,
-    key string, waiter *Txn) (after *Txn, inserted *list.Element, before *Txn,
+func (tx *Txn) wait() {
+    waiterDesc := tx.String()
+
+    var waited     *WaitForTxn
+    waitingFor := tx.nilWaitingFor
+    waitingForDesc := "NaN waitingFor"
+
+    for {
+        if waitingFor == waited && tx.atomicResetWaitingFor(waitingFor) {
+            glog.V(glogLevelTxnWaitingList).Infof("txn(%s) waited txn(%s) successfully", waiterDesc, waitingForDesc)
+
+            assert.Must(waitingFor.key != "")
+            cle := tx.GetListElement(waitingFor.key)
+            if cle == nil || cle.Value == nil {
+                return
+            }
+
+            cl := cle.CList
+            cl.Lock()
+            defer cl.Unlock()
+            if cle.Value == nil {
+                return
+            }
+            gcBackwardLocked(waitingFor.key, cl.List, cle.Element)
+            return
+        }
+
+        waitingFor = tx.waitingFor.Load()
+        if waitingFor == nil {
+            continue
+        }
+
+        assert.Must(waited == nil || waited.GetTimestamp() < waitingFor.GetTimestamp())
+        waited = nil
+
+        waitingForDesc = waitingFor.String()
+        glog.V(5).Infof("txn(%s) wait for txn(%s) to finish", waiterDesc, waitingForDesc)
+
+        select {
+        case <-waitingFor.done:
+            waited = waitingFor
+        case <-tx.wakeup:
+            waited = nil
+        }
+    }
+}
+
+func (tx *Txn) WaitForLegacy(waitFor *Txn) {
+    assert.Must(tx.GetTimestamp() > waitFor.GetTimestamp())
+    waiterDesc := tx.String()
+    waitingForDesc := waitFor.String()
+    glog.V(5).Infof("txn(%s) wait for txn(%s) to finish", waiterDesc, waitingForDesc)
+    <-waitFor.done
+    glog.V(5).Infof("txn(%s) waited txn(%s) successfully", waiterDesc, waitingForDesc)
+}
+
+func insertWaiterOnKey(begin *data_struct.ConcurrentListElement,
+    key string, waiter *Txn, waitingFor *Txn) (after *Txn, inserted *list.Element, before *Txn,
     cleInserted *data_struct.ConcurrentListElement, err error) {
     cl := begin.CList
     l := cl.List
@@ -429,7 +487,7 @@ func (tx *Txn) insertWaiterOnKey(begin *data_struct.ConcurrentListElement,
     var str string
     if glog.V(glogLevelTxnWaitingList) {
         str = fmt.Sprintf("key: '%s', list: '%s', want to insert '%d' waiting for '%d'",
-            key, txnListStr(begin.CList.List), waiter.GetTimestamp(), tx.GetTimestamp())
+            key, txnListStr(begin.CList.List), waiter.GetTimestamp(), waitingFor.GetTimestamp())
     }
 
     for cur, prev = begin.Element, nil; cur != nil; cur, prev = cur.Next(), cur {
@@ -442,8 +500,8 @@ func (tx *Txn) insertWaiterOnKey(begin *data_struct.ConcurrentListElement,
     }
     glog.V(glogLevelTxnWaitingList).Infof("%s, after inserted: '%s'", str, txnListStr(begin.CList.List))
 
-    cur = tx.gcForwardLocked(key, l, cur)
-    prev = tx.gcBackwardLocked(key, l, prev)
+    cur = gcForwardLocked(key, l, cur)
+    prev = gcBackwardLocked(key, l, prev)
 
     if cur != nil {
         after = cur.Value.(*Txn)
@@ -462,12 +520,13 @@ func (tx *Txn) insertWaiterOnKey(begin *data_struct.ConcurrentListElement,
             cleInserted = data_struct.NewConcurrentListElement(cl, inserted)
             waiter.SetListElement(key, cleInserted)
         }
+        // Set waiting for for waiter.
         assert.Must(waiter.atomicInitWaitingFor(NewWaitForTxn(before, key, waiter)))
     }
     return
 }
 
-func (tx *Txn) gcForwardLocked(key string, l *list.List, cur *list.Element) *list.Element {
+func gcForwardLocked(key string, l *list.List, cur *list.Element) *list.Element {
     var next *list.Element
     for cur != nil && cur.Value.(*Txn).waitingFor.Load().GetKey() != key {
         next = cur.Next()
@@ -481,7 +540,7 @@ func (tx *Txn) gcForwardLocked(key string, l *list.List, cur *list.Element) *lis
     return cur
 }
 
-func (tx *Txn) gcBackwardLocked(key string, l *list.List, cur *list.Element) *list.Element {
+func gcBackwardLocked(key string, l *list.List, cur *list.Element) *list.Element {
     front := l.Front()
     if front == nil {
         return nil
@@ -539,62 +598,6 @@ func (tx *Txn) Wakeup() {
     default:
         return
     }
-}
-
-func (tx *Txn) Wait() {
-    waiterDesc := tx.String()
-
-    var waited     *WaitForTxn
-    waitingFor := tx.nilWaitingFor
-    waitingForDesc := "NaN waitingFor"
-
-    for {
-        if waitingFor == waited && tx.atomicResetWaitingFor(waitingFor) {
-            glog.V(glogLevelTxnWaitingList).Infof("txn(%s) waited txn(%s) successfully", waiterDesc, waitingForDesc)
-
-            assert.Must(waitingFor.key != "")
-            cle := tx.GetListElement(waitingFor.key)
-            if cle == nil || cle.Value == nil {
-                return
-            }
-
-            cl := cle.CList
-            cl.Lock()
-            defer cl.Unlock()
-            if cle.Value == nil {
-                return
-            }
-            tx.gcBackwardLocked(waitingFor.key, cl.List, cle.Element)
-            return
-        }
-
-        waitingFor = tx.waitingFor.Load()
-        if waitingFor == nil {
-            continue
-        }
-
-        assert.Must(waited == nil || waited.GetTimestamp() < waitingFor.GetTimestamp())
-        waited = nil
-
-        waitingForDesc = waitingFor.String()
-        glog.V(5).Infof("txn(%s) wait for txn(%s) to finish", waiterDesc, waitingForDesc)
-
-        select {
-        case <-waitingFor.done:
-            waited = waitingFor
-        case <-tx.wakeup:
-            waited = nil
-        }
-    }
-}
-
-func (tx *Txn) WaitFor(waitFor *Txn) {
-    assert.Must(tx.GetTimestamp() > waitFor.GetTimestamp())
-    waiterDesc := tx.String()
-    waitingForDesc := waitFor.String()
-    glog.V(5).Infof("txn(%s) wait for txn(%s) to finish", waiterDesc, waitingForDesc)
-    <-waitFor.done
-    glog.V(5).Infof("txn(%s) waited txn(%s) successfully", waiterDesc, waitingForDesc)
 }
 
 func (tx *Txn) GetCommitData() map[string]float64 {
