@@ -13,6 +13,9 @@ import (
     "unsafe"
 )
 
+const glogLevelTxnWaitingList = glog.Level(12)
+const glogLevelAtomic = glog.Level(12)
+
 type OpType int
 
 const (
@@ -83,7 +86,8 @@ type Context map[string]float64
 
 type WaitForTxn struct {
     *Txn
-    key string
+    key    string
+    waiter *Txn
 }
 
 func (wft *WaitForTxn) GetKey() string {
@@ -93,10 +97,11 @@ func (wft *WaitForTxn) GetKey() string {
     return wft.key
 }
 
-func NewWaitForTxn(txn *Txn, key string) *WaitForTxn {
+func NewWaitForTxn(txn *Txn, key string, waiter *Txn) *WaitForTxn {
     return &WaitForTxn{
-        Txn: txn,
-        key: key,
+        Txn:    txn,
+        key:    key,
+        waiter: waiter,
     }
 }
 
@@ -121,21 +126,32 @@ func (at *AtomicWaitForTxn) Load() *WaitForTxn {
 //}
 
 func (at *AtomicWaitForTxn) CompareAndSwap(old, new *WaitForTxn) (swapped bool) {
+    assert.Must(old.waiter == new.waiter)
+
+    if glog.V(glogLevelAtomic) {
+        defer func() {
+            if swapped {
+                v := glogLevelAtomic
+                if old.Txn == nil || new.Txn == nil {
+                    v++
+                }
+                glog.V(v).Infof("txn(%d)'s waitingFor CAS from {%d} to {%d}", new.waiter.GetTimestamp(), old.GetTimestamp(), new.GetTimestamp())
+            }
+        } ()
+    }
     return atomic.CompareAndSwapPointer((*unsafe.Pointer)(unsafe.Pointer(&at.waitFor)),
         unsafe.Pointer(old), unsafe.Pointer(new))
 }
 
 func (at *AtomicWaitForTxn) SetIf(new *WaitForTxn, pred func(old, new *WaitForTxn) bool) (swapped bool) {
-    for {
-        old := at.Load()
-        if !pred(old, new) {
-            return false
+    old := at.Load()
+    for pred(old, new) {
+        if at.CompareAndSwap(old, new) {
+            return true
         }
-        if atomic.CompareAndSwapPointer((*unsafe.Pointer)(unsafe.Pointer(&at.waitFor)),
-            unsafe.Pointer(old), unsafe.Pointer(new)) {
-                return true
-        }
+        old = at.Load()
     }
+    return
 }
 
 func (at *AtomicWaitForTxn) SetIfSameKeyAndIncr(new *WaitForTxn) (swapped bool) {
@@ -169,6 +185,7 @@ type Txn struct {
 
     waitingListElements data_struct.ConcurrentMap
     waitingFor          *AtomicWaitForTxn
+    nilWaitingFor       *WaitForTxn
 }
 
 const TxIDNaN = -1
@@ -204,6 +221,7 @@ func NewTx(ops []Op) *Txn {
         firstOpMet:   false,
         ctx:          make(map[string]float64),
     }
+    txn.nilWaitingFor = NewWaitForTxn(nil, "", txn)
     return txn
 }
 
@@ -231,6 +249,7 @@ func (tx *Txn) Clone() *Txn {
 
         ctx:          make(map[string]float64),
     }
+    newTxn.nilWaitingFor = NewWaitForTxn(nil, "", newTxn)
     tx.next = newTxn
     tx.GC()
     return newTxn
@@ -325,7 +344,7 @@ func (tx *Txn) Start(ts *TimeServer, tid int, waitInterval time.Duration) {
     tx.SetStatus(TxStatusPending)
 
     tx.waitingListElements = data_struct.NewConcurrentMap(8)
-    tx.waitingFor = NewAtomicWaitForTxn(nil)
+    tx.waitingFor = NewAtomicWaitForTxn(tx.nilWaitingFor)
 
     tx.done                = make(chan struct{})
     tx.wakeup              = make(chan struct{}, 1)
@@ -342,12 +361,12 @@ func (tx *Txn) Done(status TxStatus) {
 
     close(tx.done)
 
-    glog.V(3).Infof("Done txn(%s), status: '%s'", tx.String(), status.String())
+    glog.V(4).Infof("Done txn(%s), status: '%s'", tx.String(), status.String())
 }
 
 func (tx *Txn) GetTimestamp() int64 {
     if tx == nil {
-        return 0
+        return -1
     }
     return tx.timestamp.Get()
 }
@@ -384,7 +403,7 @@ func (tx *Txn) AddWaiter(key string, waiter *Txn, holdsWriteLock bool) (hasWaitF
     hasWaitForTxn = before != nil
     if after != nil {
         // Long op.
-        after.SwitchWaitingFor(key, NewWaitForTxn(waiter, key))
+        after.SwitchWaitingFor(key, NewWaitForTxn(waiter, key, after))
     }
     return
 }
@@ -408,7 +427,7 @@ func (tx *Txn) insertWaiterOnKey(begin *data_struct.ConcurrentListElement,
     var cur, prev *list.Element
 
     var str string
-    if glog.V(3) {
+    if glog.V(glogLevelTxnWaitingList) {
         str = fmt.Sprintf("key: '%s', list: '%s', want to insert '%d' waiting for '%d'",
             key, txnListStr(begin.CList.List), waiter.GetTimestamp(), tx.GetTimestamp())
     }
@@ -421,7 +440,7 @@ func (tx *Txn) insertWaiterOnKey(begin *data_struct.ConcurrentListElement,
             break
         }
     }
-    glog.V(3).Infof("%s, after inserted: '%s'", str, txnListStr(begin.CList.List))
+    glog.V(glogLevelTxnWaitingList).Infof("%s, after inserted: '%s'", str, txnListStr(begin.CList.List))
 
     cur = tx.gcForwardLocked(key, l, cur)
     prev = tx.gcBackwardLocked(key, l, prev)
@@ -443,8 +462,7 @@ func (tx *Txn) insertWaiterOnKey(begin *data_struct.ConcurrentListElement,
             cleInserted = data_struct.NewConcurrentListElement(cl, inserted)
             waiter.SetListElement(key, cleInserted)
         }
-        glog.V(2).Infof("txn(%d)'s waitingFor CAS from nil to {%d}", waiter.GetTimestamp(), before.GetTimestamp())
-        assert.Must(waiter.waitingFor.CompareAndSwap(nil, NewWaitForTxn(before, key)))
+        assert.Must(waiter.atomicInitWaitingFor(NewWaitForTxn(before, key, waiter)))
     }
     return
 }
@@ -456,7 +474,7 @@ func (tx *Txn) gcForwardLocked(key string, l *list.List, cur *list.Element) *lis
         _ = l.Remove(cur)
         assert.Must(cur.Prev() == nil && cur.Next() == nil)
         cur.Value.(*Txn).waitingListElements.Del(key)
-        glog.V(1).Infof("gcForward, deleted txn(%d) from txn list '%s'", cur.Value.(*Txn).GetTimestamp(), txnListStr(l))
+        glog.V(glogLevelTxnWaitingList).Infof("gcForward, deleted txn(%d) from txn list '%s'", cur.Value.(*Txn).GetTimestamp(), txnListStr(l))
         cur.Value = nil
         cur = next
     }
@@ -475,7 +493,7 @@ func (tx *Txn) gcBackwardLocked(key string, l *list.List, cur *list.Element) *li
         _ = l.Remove(cur)
         assert.Must(cur.Prev() == nil && cur.Next() == nil)
         cur.Value.(*Txn).waitingListElements.Del(key)
-        glog.V(1).Infof("gcBackward, deleted txn(%d) from txn list '%s'", cur.Value.(*Txn).GetTimestamp(), txnListStr(l))
+        glog.V(glogLevelTxnWaitingList).Infof("gcBackward, deleted txn(%d) from txn list '%s'", cur.Value.(*Txn).GetTimestamp(), txnListStr(l))
         cur.Value = nil
         cur = prev
     }
@@ -500,8 +518,15 @@ func (tx *Txn) SetListElement(key string, ele *data_struct.ConcurrentListElement
     tx.waitingListElements.Set(key, ele)
 }
 
+func (tx *Txn) atomicInitWaitingFor(new *WaitForTxn) bool {
+    return tx.waitingFor.CompareAndSwap(tx.nilWaitingFor, new)
+}
+
+func (tx *Txn) atomicResetWaitingFor(old *WaitForTxn) bool {
+    return tx.waitingFor.CompareAndSwap(old, tx.nilWaitingFor)
+}
+
 func (tx *Txn) SwitchWaitingFor(key string, newWaitingFor *WaitForTxn) {
-    glog.V(2).Infof("txn(%d)'s waitingFor SetIfSameKeyAndIncr to {%d}", tx.GetTimestamp(), newWaitingFor.GetTimestamp())
     if tx.waitingFor.SetIfSameKeyAndIncr(newWaitingFor) {
         tx.Wakeup()
     }
@@ -520,14 +545,12 @@ func (tx *Txn) Wait() {
     waiterDesc := tx.String()
 
     var waited     *WaitForTxn
-    waitingFor := NewWaitForTxn(nil, "")
+    waitingFor := tx.nilWaitingFor
     waitingForDesc := "NaN waitingFor"
 
     for {
-        if waitingFor == waited && tx.waitingFor.CompareAndSwap(waitingFor, nil) {
-            glog.V(5).Infof("txn(%s) waited txn(%s) successfully", waiterDesc, waitingForDesc)
-            glog.V(2).Infof("txn(%d)'s waitingFor CAS from {%d} to nil", tx.GetTimestamp(), waitingFor.GetTimestamp())
-            //glog.V(3).Infof("txn(%d) waited txn(%d) successfully", tx.GetTimestamp(), waitingFor.GetTimestamp())
+        if waitingFor == waited && tx.atomicResetWaitingFor(waitingFor) {
+            glog.V(glogLevelTxnWaitingList).Infof("txn(%s) waited txn(%s) successfully", waiterDesc, waitingForDesc)
 
             assert.Must(waitingFor.key != "")
             cle := tx.GetListElement(waitingFor.key)

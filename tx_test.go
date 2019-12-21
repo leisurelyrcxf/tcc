@@ -105,7 +105,7 @@ func executeTxns(db* DB, txns []*Txn, txnEngineConstructor func() TxEngine) erro
 
 func TestAtomicTxn_SetIfIncrease(t *testing.T) {
     var wg sync.WaitGroup
-    at := NewAtomicWaitForTxn(NewWaitForTxn(NewTx(nil), "abc"))
+    at := NewAtomicWaitForTxn(NewWaitForTxn(NewTx(nil), "abc", nil))
     writerNum := 10
     N := int64(1000000)
 
@@ -116,7 +116,7 @@ func TestAtomicTxn_SetIfIncrease(t *testing.T) {
             defer wg.Done()
 
             for j := int64(0); j < N; j++ {
-                wtx := NewWaitForTxn(NewTx(nil), "abc")
+                wtx := NewWaitForTxn(NewTx(nil), "abc", nil)
                 wtx.timestamp.Set(j)
                 at.SetIfSameKeyAndIncr(wtx)
                 time.Sleep(time.Duration(rand.Int63n(10)) * time.Nanosecond)
