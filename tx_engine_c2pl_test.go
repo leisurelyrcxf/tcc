@@ -1,6 +1,7 @@
 package tcc
 
 import (
+    "github.com/golang/glog"
     "tcc/expr"
     "testing"
 )
@@ -46,16 +47,28 @@ func TestNewTxEngineC2PL(t *testing.T) {
     ),
     }
 
+    e := 10
+    newTxns := make([]*Txn, len(txns) * e)
+    for i := range newTxns {
+        newTxns[i] = txns[i%4].Clone()
+        newTxns[i].ID = TxnIDCounter.Add(1)
+    }
+    txns = newTxns
+
     initDBFunc := func (db *DB) {
         db.SetUnsafe("a", 0, 0, nil)
         db.SetUnsafe("b", 1, 0, nil)
         db.ts.c.Set(0)
     }
 
+    threadNum := MaxInt(len(newTxns) / 4, 4)
+    round := 10000
+    glog.Infof("%d transactions in one round, %d threads, %d rounds", len(newTxns), threadNum, round)
+
     db := NewDB()
-    TxTest(t, db, txns, initDBFunc, func() TxEngine {
-        return NewTxEngineC2PL(db, 4)
-    }, 10000, true)
+    TxTest(t, db, newTxns, initDBFunc, func() TxEngine {
+        return NewTxEngineC2PL(db, threadNum)
+    }, round, len(newTxns) <= 6, len(newTxns) <= 4)
 }
 
 func Test2PCL_Procedure(t *testing.T) {
@@ -188,7 +201,7 @@ func Test2PCL_Procedure(t *testing.T) {
     db := NewDB()
     TxTest(t, db, txns, initDBFunc, func() TxEngine {
         return NewTxEngineC2PL(db, 4)
-    }, 10000, e <= 2)
+    }, 10000, len(newTxns) <= 6, len(newTxns) <= 4)
 }
 
 

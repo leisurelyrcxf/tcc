@@ -52,22 +52,31 @@ func GetAllPossibleSerializableResult(db *DB, txns []*Txn, initDBFunc func(db *D
 }
 
 func TxTest(t *testing.T, db *DB, txns []*Txn, initDBFunc func(*DB),
-    txnEngineConstructor func() TxEngine, round int, logAll bool) {
+    txnEngineConstructor func() TxEngine, round int, allPossibleResultsCheck bool, logAll bool) {
     initDBFunc(db)
 
-    allPossibleExecuteResults, err := GetAllPossibleSerializableResult(db, txns, initDBFunc, logAll)
-    if err != nil {
-        t.Errorf(err.Error())
-        return
+    checker := func (db* DB) bool {
+        return true
     }
 
-    checkResult := func (db* DB) bool {
-        for _, oneResult := range allPossibleExecuteResults {
-            if checkEqual(db, oneResult) {
-                return true
-            }
+    if allPossibleResultsCheck {
+        glog.Infof("Check against all possible serializable results")
+        allPossibleExecuteResults, err := GetAllPossibleSerializableResult(db, txns, initDBFunc, logAll)
+        if err != nil {
+            t.Errorf(err.Error())
+            return
         }
-        return false
+
+        checker = func (db* DB) bool {
+            for _, oneResult := range allPossibleExecuteResults {
+                if checkEqual(db, oneResult) {
+                    return true
+                }
+            }
+            return false
+        }
+    } else {
+        glog.Infof("Skip all possible serializable results check, reason: 'too large'")
     }
 
     start := time.Now()
@@ -86,7 +95,7 @@ func TxTest(t *testing.T, db *DB, txns []*Txn, initDBFunc func(*DB),
 
         totalTime += time.Since(start)
 
-        if !checkResult(db) {
+        if !checker(db) {
             t.Errorf("result %s not conflict serializable", SerializeMap(db.Snapshot()))
             return
         }
