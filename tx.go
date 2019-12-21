@@ -156,7 +156,7 @@ func (at *AtomicWaitForTxn) SetIf(new *WaitForTxn, pred func(old, new *WaitForTx
 
 func (at *AtomicWaitForTxn) SetIfSameKeyAndIncr(new *WaitForTxn) (swapped bool) {
     return at.SetIf(new, func(old, new *WaitForTxn) bool {
-        return old != nil && new.key == old.key && new.GetTimestamp() > old.GetTimestamp()
+        return new.key == old.key && new.GetTimestamp() > old.GetTimestamp()
     })
 }
 
@@ -386,7 +386,11 @@ func (tx *Txn) WaitFor(key string, waitingFor *Txn, holdsWriteLock bool) {
             return cle
         }).(*data_struct.ConcurrentListElement)
 
-        after, _, before, _, err = insertWaiterOnKey(txWaitingListEle, key, tx, waitingFor)
+        after, _, before, _, err = insertWaiterOnKey(txWaitingListEle, key, tx, waitingFor, func(waitFor *Txn) {
+            // Locked setter, otherwise later SwitchWaitingFor call may got lost due to old waitFor key is "".
+            assert.Must(waitFor != nil)
+            assert.Must(tx.atomicInitWaitingFor(NewWaitForTxn(waitFor, key, tx)))
+        })
         if err == ErrStaleRead {
             if waitingFor.GetStatus().Done() || waitingFor.waitingFor.Load().GetKey() != key {
                 break
@@ -467,7 +471,7 @@ func (tx *Txn) WaitForLegacy(waitFor *Txn) {
 }
 
 func insertWaiterOnKey(begin *data_struct.ConcurrentListElement,
-    key string, waiter *Txn, waitingFor *Txn) (after *Txn, inserted *list.Element, before *Txn,
+    key string, waiter *Txn, waitingFor *Txn, setWaitFor func (*Txn)) (after *Txn, inserted *list.Element, before *Txn,
     cleInserted *data_struct.ConcurrentListElement, err error) {
     cl := begin.CList
     l := cl.List
@@ -520,8 +524,7 @@ func insertWaiterOnKey(begin *data_struct.ConcurrentListElement,
             cleInserted = data_struct.NewConcurrentListElement(cl, inserted)
             waiter.SetListElement(key, cleInserted)
         }
-        // Set waiting for for waiter.
-        assert.Must(waiter.atomicInitWaitingFor(NewWaitForTxn(before, key, waiter)))
+        setWaitFor(before)
     }
     return
 }
