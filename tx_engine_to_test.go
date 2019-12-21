@@ -98,20 +98,20 @@ func TestTxEngineTimestampOrderingProc(t *testing.T) {
                         Op:    expr.Add,
                         Left:  &expr.FuncExpr{
                             Name:       expr.Get,
-                            Parameters: []expr.Expr{&expr.ConstExpr{
+                            Parameters: []expr.Expr{&expr.ConstVal{
                                 Obj: "a",
                                 Typ: expr.String,
                             }},
                         },
                         Right: &expr.FuncExpr{
                             Name:       expr.Get,
-                            Parameters: []expr.Expr{&expr.ConstExpr{
+                            Parameters: []expr.Expr{&expr.ConstVal{
                                 Obj: "b",
                                 Typ: expr.String,
                             }},
                         },
                     },
-                    Right: &expr.ConstExpr{
+                    Right: &expr.ConstVal{
                         Obj: 5,
                         Typ: expr.Float64,
                     },
@@ -119,7 +119,7 @@ func TestTxEngineTimestampOrderingProc(t *testing.T) {
                 Then: &expr.FuncExpr{
                     Name:       expr.Set,
                     Parameters: []expr.Expr{
-                        &expr.ConstExpr{
+                        &expr.ConstVal{
                             Obj: "a",
                             Typ: expr.String,
                         },
@@ -127,12 +127,12 @@ func TestTxEngineTimestampOrderingProc(t *testing.T) {
                             Op:    expr.Minus,
                             Left:  &expr.FuncExpr{
                                 Name:       expr.Get,
-                                Parameters: []expr.Expr{&expr.ConstExpr{
+                                Parameters: []expr.Expr{&expr.ConstVal{
                                     Obj: "a",
                                     Typ: expr.String,
                                 }},
                             },
-                            Right: &expr.ConstExpr{
+                            Right: &expr.ConstVal{
                                 Obj: 5,
                                 Typ: expr.Float64,
                             },
@@ -152,20 +152,20 @@ func TestTxEngineTimestampOrderingProc(t *testing.T) {
                         Op:    expr.Add,
                         Left:  &expr.FuncExpr{
                             Name:       expr.Get,
-                            Parameters: []expr.Expr{&expr.ConstExpr{
+                            Parameters: []expr.Expr{&expr.ConstVal{
                                 Obj: "a",
                                 Typ: expr.String,
                             }},
                         },
                         Right: &expr.FuncExpr{
                             Name:       expr.Get,
-                            Parameters: []expr.Expr{&expr.ConstExpr{
+                            Parameters: []expr.Expr{&expr.ConstVal{
                                 Obj: "b",
                                 Typ: expr.String,
                             }},
                         },
                     },
-                    Right: &expr.ConstExpr{
+                    Right: &expr.ConstVal{
                         Obj: 5,
                         Typ: expr.Float64,
                     },
@@ -173,7 +173,7 @@ func TestTxEngineTimestampOrderingProc(t *testing.T) {
                 Then: &expr.FuncExpr{
                     Name:       expr.Set,
                     Parameters: []expr.Expr{
-                        &expr.ConstExpr{
+                        &expr.ConstVal{
                             Obj: "b",
                             Typ: expr.String,
                         },
@@ -181,12 +181,12 @@ func TestTxEngineTimestampOrderingProc(t *testing.T) {
                             Op:    expr.Minus,
                             Left:  &expr.FuncExpr{
                                 Name:       expr.Get,
-                                Parameters: []expr.Expr{&expr.ConstExpr{
+                                Parameters: []expr.Expr{&expr.ConstVal{
                                     Obj: "b",
                                     Typ: expr.String,
                                 }},
                             },
-                            Right: &expr.ConstExpr{
+                            Right: &expr.ConstVal{
                                 Obj: 5,
                                 Typ: expr.Float64,
                             },

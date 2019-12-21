@@ -26,14 +26,37 @@ const (
     Float64
 )
 
-type ConstExpr struct {
+type ConstVal struct {
     Obj interface{}
     Typ Type
 }
 
-func (ce *ConstExpr) iExpr() {}
+func NewConst(val interface{}) *ConstVal {
+    typ := reflect.TypeOf(val)
+    switch typ.Kind() {
+    case reflect.Bool:
+        return &ConstVal{
+            Obj: val,
+            Typ: Boolean,
+        }
+    case reflect.String:
+        return &ConstVal{
+            Obj: val,
+            Typ: String,
+        }
+    case reflect.Float64:
+        return &ConstVal{
+            Obj: val,
+            Typ: Float64,
+        }
+    default:
+        panic(fmt.Sprintf("unsupported type '%s'", typ.Kind().String()))
+    }
+}
 
-func (ce *ConstExpr) Eval(e Executor, ctx Context) (interface{}, error) {
+func (ce *ConstVal) iExpr() {}
+
+func (ce *ConstVal) Eval(e Executor, ctx Context) (interface{}, error) {
     switch ce.Typ {
     case Boolean:
         return ce.Obj.(bool), nil
@@ -53,6 +76,8 @@ func (ce *ConstExpr) Eval(e Executor, ctx Context) (interface{}, error) {
 const (
     Get = "get"
     Set = "set"
+    Assert = "assert"
+    AssertEqual = "assert_equal"
 )
 
 type FuncExpr struct {
@@ -63,9 +88,10 @@ type FuncExpr struct {
 func (fe *FuncExpr) iExpr() {}
 
 var ErrParameterNumNotMatch = fmt.Errorf("parameter number not match")
-var ErrKeyTypeNotString = fmt.Errorf("key type not string")
-var ErrValueTypeNotMatch = fmt.Errorf("value type not match")
-var ErrBoolTypeNotMatch = fmt.Errorf("bool type not match")
+var ErrKeyTypeNotString     = fmt.Errorf("key type not string")
+var ErrValueTypeNotMatch    = fmt.Errorf("value type not match")
+var ErrBoolTypeNotMatch     = fmt.Errorf("bool type not match")
+var ErrAssertFailed         = fmt.Errorf("assert failed")
 
 func evalKey(expr Expr, e Executor, ctx Context) (string, error) {
     keyObj, err := expr.Eval(e, ctx)
@@ -127,6 +153,34 @@ func (fe *FuncExpr) Eval(e Executor, ctx Context) (interface{}, error) {
             return nil, err
         }
         return nil, e.Set(key, value, ctx)
+    case Assert:
+        if len(fe.Parameters) != 1 {
+            return nil, ErrParameterNumNotMatch
+        }
+        b, err := evalBoolean(fe.Parameters[0], e, ctx)
+        if err != nil {
+            return nil, err
+        }
+        if !b {
+            return false, ErrAssertFailed
+        }
+        return true, nil
+    case AssertEqual:
+        if len(fe.Parameters) != 2 {
+            return nil, ErrParameterNumNotMatch
+        }
+        lv, err := evalValue(fe.Parameters[0], e, ctx)
+        if err != nil {
+            return nil, err
+        }
+        rv, err := evalValue(fe.Parameters[1], e, ctx)
+        if err != nil {
+            return nil, err
+        }
+        if lv != rv {
+            return false, fmt.Errorf("%s, 'got(%v) != exp(%v)'", ErrAssertFailed.Error(), lv, rv)
+        }
+        return true, nil
     default:
         panic("not implemented yet")
     }
@@ -139,6 +193,7 @@ const (
     Minus
     GT
     GTLE
+    EQ
 )
 
 type BinaryExpr struct {
@@ -165,6 +220,8 @@ func (be *BinaryExpr) Eval(e Executor, ctx Context) (interface{}, error) {
         return lf > rf, nil
     case GTLE:
         return lf >= rf, nil
+    case EQ:
+        return lf == rf, nil
     default:
         panic("not implemented yet")
     }

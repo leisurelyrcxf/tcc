@@ -158,6 +158,12 @@ func (db *DB) Get(key string) (float64, error) {
     return 0.0, KeyNotExist
 }
 
+func (db *DB) MustGet(key string) float64 {
+    val, err := db.Get(key)
+    assert.MustNoError(err)
+    return val
+}
+
 func (db *DB) SetMVCC(key string, val float64, writtenTxn *Txn, holdsWriteLock bool) {
     if !holdsWriteLock {
         db.values.GetLazy(key, func()interface{} {

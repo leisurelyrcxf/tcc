@@ -218,7 +218,10 @@ func (te *TxEngineMVCCTO) executeOp(db *DB, txn *Txn, op Op) error {
     }
     if op.typ == Procedure {
         _, err := op.expr.Eval(te.e, txn)
-        return err
+        if err != nil {
+            return NewTxnError(fmt.Errorf("error executing procudure, detail: '%s'", err.Error()), false)
+        }
+        return nil
     }
     panic("not implemented")
 }
