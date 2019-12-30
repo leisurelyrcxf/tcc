@@ -30,31 +30,34 @@ func TestTxEngineMVCCTOLostUpdate(t *testing.T) {
             typ: IncrAdd,
             operatorNum: 1,
         }},
-    ),
-    NewTx(
-       []Op {{
-           key: "b",
-           typ: IncrMultiply,
-           operatorNum: 20,
-       }, {
-           key: "a",
-           typ: IncrAdd,
-           operatorNum: 10,
-       }},
-    ),
-    NewTx(
-       []Op {{
-           key: "a",
-           typ: WriteDirect,
-           operatorNum: 100,
-       }},
-    ),
-    }
+    ), NewTx(
+        []Op {{
+            key: "b",
+            typ: IncrMultiply,
+            operatorNum: 20,
+        }, {
+            key: "a",
+            typ: IncrAdd,
+            operatorNum: 10,
+        }},
+    ), NewTx(
+        []Op {{
+            key: "a",
+            typ: WriteDirect,
+            operatorNum: 100,
+        }},
+    ), NewTx(
+        []Op {{
+            key: "b",
+            typ: WriteDirect,
+            operatorNum: 100,
+        }},
+    )}
 
     e := 10
     newTxns := make([]*Txn, len(txns) * e)
     for i := range newTxns {
-        newTxns[i] = txns[i%4].Clone()
+        newTxns[i] = txns[i%len(txns)].Clone()
         newTxns[i].ID = TxnIDCounter.Add(1)
     }
     txns = newTxns

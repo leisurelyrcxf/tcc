@@ -382,7 +382,6 @@ var ErrStaleRead = fmt.Errorf("stale read, should retry")
 func (tx *Txn) WaitFor(key string, waitingFor *Txn, holdsWriteLock bool) {
     assert.Must(!holdsWriteLock)
     var after, before *Txn
-    var err error
     for {
         txWaitingListEle := waitingFor.waitingListElements.GetLazy(key, func()interface{} {
             l := data_struct.NewConcurrentList()
@@ -391,32 +390,28 @@ func (tx *Txn) WaitFor(key string, waitingFor *Txn, holdsWriteLock bool) {
             return cle
         }).(*data_struct.ConcurrentListElement)
 
-        after, _, before, _, err = insertWaiterOnKey(txWaitingListEle, key, tx, waitingFor, func(waitFor *Txn) {
+        after, _, before, _, _ = insertWaiterOnKey(txWaitingListEle, key, tx, waitingFor, func(waitFor *Txn) {
             // Locked setter, otherwise later SwitchWaitingFor call may got lost due to old waitFor key is "".
             assert.Must(waitFor != nil)
             assert.Must(tx.atomicInitWaitingFor(NewWaitForTxn(waitFor, key, tx)))
         })
-        if err == ErrStaleRead {
-            if waitingFor.GetStatus().Done() || waitingFor.waitingFor.Load().GetKey() != key {
-                break
+        if before == nil {
+            if waitingFor.GetStatus().Done() {
+                return
             }
-            assert.Must(false)
             continue
         }
-        break
-    }
-    if !((before == nil || tx.GetTimestamp() > before.GetTimestamp()) && (after == nil || tx.GetTimestamp() < after.GetTimestamp())) {
-        assert.Must(false)
-    }
 
-    if after != nil {
-        // Long op.
-        after.SwitchWaitingFor(key, NewWaitForTxn(tx, key, after))
-    }
-    if before != nil {
+        if !(tx.GetTimestamp() > before.GetTimestamp() && (after == nil || tx.GetTimestamp() < after.GetTimestamp())) {
+            assert.Must(false)
+        }
+        if after != nil {
+            // Long op.
+            after.SwitchWaitingFor(key, NewWaitForTxn(tx, key, after))
+        }
         tx.wait()
+        return
     }
-    return
 }
 
 func (tx *Txn) wait() {
