@@ -461,7 +461,7 @@ func (tx *Txn) wait() {
     }
 }
 
-func (tx *Txn) WaitForLegacy(waitFor *Txn) {
+func (tx *Txn) WaitForBasic(waitFor *Txn) {
     assert.Must(tx.GetTimestamp() > waitFor.GetTimestamp())
     waiterDesc := tx.String()
     waitingForDesc := waitFor.String()

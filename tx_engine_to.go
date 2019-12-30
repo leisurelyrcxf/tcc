@@ -306,7 +306,7 @@ func (te *TxEngineTO) get(db *DB, txn *Txn, key string) (float64, error) {
         }
 
         db.lm.RUnlock(key)
-        txn.WaitForLegacy(maxWriteTxn)
+        txn.WaitForBasic(maxWriteTxn)
         db.lm.RLock(key)
     }
 

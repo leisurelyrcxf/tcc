@@ -3,6 +3,7 @@ package tcc
 import (
     "fmt"
     "github.com/golang/glog"
+    "runtime"
     "tcc/expr"
     "testing"
     "time"
@@ -80,7 +81,8 @@ func TestTxEngineMVCCTOLostUpdate(t *testing.T) {
     var totalTime time.Duration
     threadNum := MaxInt(len(newTxns) / 4, 4)
     round := 10000
-    glog.Infof("%d transactions in one round, %d threads, %d rounds", len(newTxns), threadNum, round)
+    glog.Infof("%d transactions in one round, %d threads, %d rounds, GoMaxProcs: %d", len(newTxns), threadNum, round,
+        runtime.GOMAXPROCS(0))
     for i := 0; i < round; i++ {
         glog.V(3).Infof("\nRound: %d\n", i)
         duration, err := executeOneRoundMVCCTO(db, txns, initDBFunc, threadNum, false, nil)
