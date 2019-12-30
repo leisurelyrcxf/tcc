@@ -86,7 +86,7 @@ func TestTxEngineTimestampOrdering(t *testing.T) {
     fmt.Printf("\nCost %f seconds for %d rounds\n", float64(totalTime)/float64(time.Second), round)
 }
 
-func TestTxEngineTimestampOrderingProc(t *testing.T) {
+func TestTxEngineTimestampOrderingProcWriteSkew(t *testing.T) {
     db := NewDB()
     txns := []*Txn{NewTx(
         []Op {{
@@ -213,7 +213,7 @@ func TestTxEngineTimestampOrderingProc(t *testing.T) {
     }
 
     var totalTime time.Duration
-    round := 100000
+    round := 10000
     for i := 0; i < round; i++ {
         glog.V(10).Infof("\nRound: %d\n", i)
         duration, err := executeOneRound(db, txns, initDBFunc)
@@ -223,7 +223,7 @@ func TestTxEngineTimestampOrderingProc(t *testing.T) {
             t.Errorf(err.Error())
             return
         }
-        if i % 100 == 0 {
+        if i % 1000 == 0 {
             fmt.Printf("%d rounds finished\n", i)
         }
     }
@@ -239,7 +239,7 @@ func executeOneRound(db *DB, txns []*Txn, initDBFunc func(*DB)) (time.Duration, 
     start := time.Now()
     newTxns := make([]*Txn, 0, len(txns))
     var newTxnsMutex sync.Mutex
-    te := NewTxEngineTO(db,4, db.lm, true, time.Microsecond * 3)
+    te := NewTxEngineTO(db,4, db.lm, time.Microsecond * 3)
     te.AddPostCommitListener(func(txn *Txn) {
         newTxnsMutex.Lock()
         newTxns = append(newTxns, txn)

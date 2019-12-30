@@ -16,40 +16,21 @@ var txnErrStaleWrite = NewTxnError(fmt.Errorf("stale write"), true)
 type TxEngineExecutorTO struct {
     te          *TxEngineTO
     db          *DB
-    enableCache bool
 }
 
-func NewTxEngineExecutorTO(te *TxEngineTO, db* DB, enableCache bool) *TxEngineExecutorTO {
+func NewTxEngineExecutorTO(te *TxEngineTO, db* DB) *TxEngineExecutorTO {
     return &TxEngineExecutorTO{
         te:           te,
         db:           db,
-        enableCache:  enableCache,
     }
 }
 
 func (e *TxEngineExecutorTO) Get(key string, ctx expr.Context) (float64, error) {
-    if !e.enableCache {
-        return e.te.get(e.db, ctx.(*Txn), key)
-    }
-    tx := ctx.(*Txn)
-    if val, ok := tx.ctx[key]; ok {
-        glog.V(10).Infof("Get cached value %f for key '%s'", val, key)
-        return val, nil
-    }
-    val, err := e.te.get(e.db, tx, key)
-    if err == nil {
-        tx.ctx[key] = val
-        glog.V(10).Infof("Get value %f for key '%s'", val, key)
-    }
-    return val, err
+    return e.te.get(e.db, ctx.(*Txn), key)
 }
 
 func (e *TxEngineExecutorTO) Set(key string, val float64, ctx expr.Context) error {
-    tx := ctx.(*Txn)
-    delete(tx.ctx, key)
-    err := e.te.set(tx, key, val, e.db.ts)
-    glog.V(10).Infof("Set value %f for key '%s'", val, key)
-    return err
+    return e.te.set(ctx.(*Txn), key, val, e.db.ts)
 }
 
 type TxEngineTO struct {
@@ -64,7 +45,7 @@ type TxEngineTO struct {
     e                   *TxEngineExecutorTO
 }
 
-func NewTxEngineTO(db *DB, threadNum int, lm *LockManager, enableCache bool, retryWaitInterval time.Duration) *TxEngineTO {
+func NewTxEngineTO(db *DB, threadNum int, lm *LockManager, retryWaitInterval time.Duration) *TxEngineTO {
     te := &TxEngineTO{
         threadNum:         threadNum,
         mw:                data_struct.NewConcurrentMap(1024),
@@ -74,7 +55,7 @@ func NewTxEngineTO(db *DB, threadNum int, lm *LockManager, enableCache bool, ret
         errs:              make(chan *TxnError, threadNum * 100),
         retryWaitInterval: retryWaitInterval,
     }
-    te.e = NewTxEngineExecutorTO(te, db, enableCache)
+    te.e = NewTxEngineExecutorTO(te, db)
     return te
 }
 

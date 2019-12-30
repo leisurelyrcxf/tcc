@@ -13,40 +13,21 @@ import (
 type TxEngineExecutorMVCCTO struct {
     te          *TxEngineMVCCTO
     db          *DB
-    enableCache bool
 }
 
-func NewTxEngineExecutorMVCCTO(te *TxEngineMVCCTO, db* DB, enableCache bool) *TxEngineExecutorMVCCTO {
+func NewTxEngineExecutorMVCCTO(te *TxEngineMVCCTO, db* DB) *TxEngineExecutorMVCCTO {
     return &TxEngineExecutorMVCCTO{
         te:           te,
         db:           db,
-        enableCache:  enableCache,
     }
 }
 
 func (e *TxEngineExecutorMVCCTO) Get(key string, ctx expr.Context) (float64, error) {
-    if !e.enableCache {
-        return e.te.get(e.db, ctx.(*Txn), key)
-    }
-    tx := ctx.(*Txn)
-    if val, ok := tx.ctx[key]; ok {
-        glog.V(10).Infof("Get cached value %f for key '%s'", val, key)
-        return val, nil
-    }
-    val, err := e.te.get(e.db, tx, key)
-    if err == nil {
-        tx.ctx[key] = val
-        glog.V(10).Infof("Get value %f for key '%s'", val, key)
-    }
-    return val, err
+    return e.te.get(e.db, ctx.(*Txn), key)
 }
 
 func (e *TxEngineExecutorMVCCTO) Set(key string, val float64, ctx expr.Context) error {
-    tx := ctx.(*Txn)
-    delete(tx.ctx, key)
-    err := e.te.set(e.db, tx, key, val)
-    glog.V(10).Infof("Set value %f for key '%s'", val, key)
-    return err
+    return e.te.set(e.db, ctx.(*Txn), key, val)
 }
 
 type TxEngineMVCCTO struct {
@@ -59,7 +40,7 @@ type TxEngineMVCCTO struct {
     e                   *TxEngineExecutorMVCCTO
 }
 
-func NewTxEngineMVCCTO(db *DB, threadNum int, enableCache bool, retryWaitInterval time.Duration) *TxEngineMVCCTO {
+func NewTxEngineMVCCTO(db *DB, threadNum int, retryWaitInterval time.Duration) *TxEngineMVCCTO {
     te := &TxEngineMVCCTO{
         threadNum:         threadNum,
         mr:                data_struct.NewConcurrentMap(1024),
@@ -67,7 +48,7 @@ func NewTxEngineMVCCTO(db *DB, threadNum int, enableCache bool, retryWaitInterva
         retryWaitInterval: retryWaitInterval,
         errs:              make(chan *TxnError, threadNum * 100),
     }
-    te.e = NewTxEngineExecutorMVCCTO(te, db, enableCache)
+    te.e = NewTxEngineExecutorMVCCTO(te, db)
     return te
 }
 
@@ -219,6 +200,9 @@ func (te *TxEngineMVCCTO) executeOp(db *DB, txn *Txn, op Op) error {
     if op.typ == Procedure {
         _, err := op.expr.Eval(te.e, txn)
         if err != nil {
+            if txnErr, isTxnError := err.(*TxnError); isTxnError {
+                return txnErr
+            }
             return NewTxnError(fmt.Errorf("error executing procudure, detail: '%s'", err.Error()), false)
         }
         return nil
@@ -267,7 +251,7 @@ func (te *TxEngineMVCCTO) get(db *DB, txn *Txn, key string) (float64, error) {
 
         if dbValWrittenTxn == TxNaN || stats.Succeeded() {
             te.putReadTxForKeyAndVersion(key, dbVal.Version, txn)
-            txn.AddReadVersion(key, dbVal.Version)
+            txn.CheckAndAddReadVersion(key, dbVal.Version)
             glog.V(10).Infof("txn(%s) got value(%f, %d) for key '%s'", txn.String(), dbVal.Value, dbVal.Version, key)
             return dbVal.Value, nil
         }

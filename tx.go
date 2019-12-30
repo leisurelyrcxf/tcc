@@ -82,8 +82,6 @@ func (s TxStatus) HasError() bool {
 
 var TxnIDCounter = sync2.NewAtomicInt64(0)
 
-type Context map[string]float64
-
 type WaitForTxn struct {
     *Txn
     key    string
@@ -178,10 +176,10 @@ type Txn struct {
     next         *Txn
     prev         *Txn
 
-    ctx          Context
+    vars         map[string]interface{}
 
-    done          chan struct{}
-    wakeup        chan struct{}
+    done         chan struct{}
+    wakeup       chan struct{}
 
     waitingListElements data_struct.ConcurrentMap
     waitingFor          *AtomicWaitForTxn
@@ -202,10 +200,8 @@ var TxNaN = &Txn{
 
     firstOpMet:   true,
 
-    ctx:          make(map[string]float64),
+    vars:         make(map[string]interface{}),
 }
-
-var emptyString string
 
 func NewTx(ops []Op) *Txn {
     txn := &Txn{
@@ -219,10 +215,19 @@ func NewTx(ops []Op) *Txn {
         status:       sync2.NewAtomicInt32(int32(TxStatusInitialized)),
 
         firstOpMet:   false,
-        ctx:          make(map[string]float64),
+        vars:         make(map[string]interface{}),
     }
     txn.nilWaitingFor = NewWaitForTxn(nil, "", txn)
     return txn
+}
+
+func (tx *Txn) GetVar(key string) (interface{}, bool) {
+    val, ok := tx.vars[key]
+    return val, ok
+}
+
+func (tx *Txn) SetVar(key string, val interface{}) {
+    tx.vars[key] = val
 }
 
 func (tx *Txn) Clone() *Txn {
@@ -247,7 +252,7 @@ func (tx *Txn) Clone() *Txn {
         prev:         tx,
         next:         nil,
 
-        ctx:          make(map[string]float64),
+        vars:         make(map[string]interface{}),
     }
     newTxn.nilWaitingFor = NewWaitForTxn(nil, "", newTxn)
     tx.next = newTxn
@@ -258,7 +263,7 @@ func (tx *Txn) Clone() *Txn {
 func (tx *Txn) GC() {
     tx.commitData = nil
     tx.readVersions = nil
-    tx.ctx = nil
+    tx.vars = nil
     // Dangerous don't do this
     //tx.done = nil
     //tx.wakeup = nil
@@ -279,7 +284,7 @@ func (tx *Txn) ClearReadVersions() {
 }
 
 func (tx *Txn) ClearContext() {
-    tx.ctx = make(map[string]float64)
+    tx.vars = make(map[string]interface{})
 }
 
 // Only used in tests.
@@ -302,10 +307,10 @@ func (tx *Txn) AddCommitData(key string, val float64) {
     tx.commitData[key] = val
 }
 
-func (tx *Txn) AddReadVersion(key string, val int64) {
-    _, containsKey := tx.readVersions[key]
-    assert.Must(!containsKey)
-    tx.readVersions[key] = val
+func (tx *Txn) CheckAndAddReadVersion(key string, version int64) {
+    oldVersion, containsKey := tx.readVersions[key]
+    assert.Must(!containsKey || oldVersion == version)
+    tx.readVersions[key] = version
 }
 
 func (tx *Txn) CollectKeys() []string {

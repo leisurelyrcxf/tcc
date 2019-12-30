@@ -8,7 +8,7 @@ import (
     "time"
 )
 
-func TestTxEngineMVCCTO(t *testing.T) {
+func TestTxEngineMVCCTOLostUpdate(t *testing.T) {
     db := NewDBWithMVCCEnabled()
     txns := []*Txn{NewTx(
         []Op {{
@@ -94,7 +94,7 @@ func TestTxEngineMVCCTO(t *testing.T) {
     fmt.Printf("\nCost %f seconds for %d rounds\n", float64(totalTime)/float64(time.Second), round)
 }
 
-func TestBankTransferConsistentRead(t *testing.T) {
+func TestBankTransferSnapshotRead(t *testing.T) {
     db := NewDBWithMVCCEnabled()
 
     soldA := float64(1000)
@@ -147,16 +147,48 @@ func TestBankTransferConsistentRead(t *testing.T) {
               Parameters: []expr.Expr{
                   &expr.BinaryExpr{
                       Op:    expr.Add,
-                      Left:  &expr.FuncExpr{
-                          Name:       expr.Get,
-                          Parameters: []expr.Expr{expr.NewConst("a")},
+                      Left:  &expr.BinaryExpr{
+                          Op: expr.Assign,
+                          Left: expr.NewIdentifier("a"),
+                          Right: &expr.FuncExpr{
+                              Name:       expr.Get,
+                              Parameters: []expr.Expr{expr.NewConst("a")},
+                          },
                       },
-                      Right: &expr.FuncExpr{
-                          Name:       expr.Get,
-                          Parameters: []expr.Expr{expr.NewConst("b")},
+                      Right: &expr.BinaryExpr{
+                          Op: expr.Assign,
+                          Left: expr.NewIdentifier("b"),
+                          Right: &expr.FuncExpr{
+                              Name:       expr.Get,
+                              Parameters: []expr.Expr{expr.NewConst("b")},
+                          },
                       },
                   },
                   expr.NewConst(soldA + soldB),
+              },
+          },
+      }, {
+          typ: Procedure,
+          expr: &expr.FuncExpr{
+              Name:       expr.AssertEqual,
+              Parameters: []expr.Expr{
+                  &expr.FuncExpr{
+                      Name:       expr.Get,
+                      Parameters: []expr.Expr{expr.NewConst("a")},
+                  },
+                  expr.NewIdentifier("a"),
+              },
+          },
+      }, {
+          typ: Procedure,
+          expr: &expr.FuncExpr{
+              Name:       expr.AssertEqual,
+              Parameters: []expr.Expr{
+                  &expr.FuncExpr{
+                      Name:       expr.Get,
+                      Parameters: []expr.Expr{expr.NewConst("b")},
+                  },
+                  expr.NewIdentifier("b"),
               },
           },
       }},
@@ -177,7 +209,7 @@ func TestBankTransferConsistentRead(t *testing.T) {
     for i := 0; i < round; i++ {
         glog.V(3).Infof("\nRound: %d\n", i)
         duration, err := executeOneRoundMVCCTO(db, txns, initDBFunc, threadNum, false, func() *TxEngineMVCCTO {
-            return NewTxEngineMVCCTO(db, threadNum, false, time.Nanosecond * 500)
+            return NewTxEngineMVCCTO(db, threadNum, time.Nanosecond * 500)
         })
         totalTime+= duration
 
@@ -192,7 +224,7 @@ func TestBankTransferConsistentRead(t *testing.T) {
     fmt.Printf("\nCost %f seconds for %d rounds\n", float64(totalTime)/float64(time.Second), round)
 }
 
-func TestTxEngineMVCCTOProc(t *testing.T) {
+func TestTxEngineMVCCTOProcWriteSkew(t *testing.T) {
     db := NewDBWithMVCCEnabled()
     txns := []*Txn{NewTx(
         []Op{{
@@ -256,19 +288,27 @@ func TestTxEngineMVCCTOProc(t *testing.T) {
                     Op: expr.GTLE,
                     Left: &expr.BinaryExpr{
                         Op: expr.Add,
-                        Left: &expr.FuncExpr{
-                            Name: expr.Get,
-                            Parameters: []expr.Expr{&expr.ConstVal{
-                                Obj: "a",
-                                Typ: expr.String,
-                            }},
+                        Left: &expr.BinaryExpr{
+                            Op: expr.Assign,
+                            Left: expr.NewIdentifier("a"),
+                            Right: &expr.FuncExpr{
+                                Name: expr.Get,
+                                Parameters: []expr.Expr{&expr.ConstVal{
+                                    Obj: "a",
+                                    Typ: expr.String,
+                                }},
+                            },
                         },
-                        Right: &expr.FuncExpr{
-                            Name: expr.Get,
-                            Parameters: []expr.Expr{&expr.ConstVal{
-                                Obj: "b",
-                                Typ: expr.String,
-                            }},
+                        Right: &expr.BinaryExpr{
+                            Op: expr.Assign,
+                            Left: expr.NewIdentifier("b"),
+                            Right: &expr.FuncExpr{
+                                Name: expr.Get,
+                                Parameters: []expr.Expr{&expr.ConstVal{
+                                    Obj: "b",
+                                    Typ: expr.String,
+                                }},
+                            },
                         },
                     },
                     Right: &expr.ConstVal{
@@ -285,13 +325,7 @@ func TestTxEngineMVCCTOProc(t *testing.T) {
                         },
                         &expr.BinaryExpr{
                             Op: expr.Minus,
-                            Left: &expr.FuncExpr{
-                                Name: expr.Get,
-                                Parameters: []expr.Expr{&expr.ConstVal{
-                                    Obj: "b",
-                                    Typ: expr.String,
-                                }},
-                            },
+                            Left: expr.NewIdentifier("b"),
                             Right: &expr.ConstVal{
                                 Obj: 5,
                                 Typ: expr.Float64,
@@ -348,12 +382,12 @@ func executeOneRoundMVCCTO(db *DB, txns []*Txn, initDBFunc func(*DB), threadNum 
     }
 
     start := time.Now()
-    te := constructor()
-    if constructor() == nil {
+    if constructor == nil {
         constructor = func() *TxEngineMVCCTO {
-            return NewTxEngineMVCCTO(db, threadNum, true, time.Nanosecond * 500)
+            return NewTxEngineMVCCTO(db, threadNum, time.Nanosecond * 500)
         }
     }
+    te := constructor()
     if err := te.ExecuteTxns(db, txns); err != nil {
         return 0, err
     }

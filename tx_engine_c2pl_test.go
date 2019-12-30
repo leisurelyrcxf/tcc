@@ -192,7 +192,7 @@ func Test2PCL_Procedure(t *testing.T) {
     }
     txns = newTxns
 
-    initDBFunc := func (db *DB) {
+    initDBFunc := func(db *DB) {
         db.SetUnsafe("a", 0, 0, nil)
         db.SetUnsafe("b", 5, 0, nil)
         db.ts.c.Set(0)

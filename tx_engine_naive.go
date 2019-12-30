@@ -2,7 +2,6 @@ package tcc
 
 import (
     "fmt"
-    "github.com/golang/glog"
     "tcc/expr"
 )
 
@@ -17,23 +16,11 @@ func NewTxEngineBasicExecutor(db *DB) *TxEngineBasicExecutor {
 }
 
 func (e *TxEngineBasicExecutor) Get(key string, ctx expr.Context) (float64, error) {
-    tx := ctx.(*Txn)
-    if val, ok := tx.ctx[key]; ok {
-        glog.V(10).Infof("Get cached value %f for key '%s'", val, key)
-        return val, nil
-    }
-    val, err := e.db.Get(key)
-    if err == nil {
-        tx.ctx[key] = val
-        glog.V(10).Infof("Get value %f for key '%s'", val, key)
-    }
-    return val, err
+    return e.db.Get(key)
 }
 
 func (e *TxEngineBasicExecutor) Set(key string, val float64, ctx expr.Context) error {
     e.db.SetUnsafe(key, val, 0, TxNaN)
-    ctx.(*Txn).ctx[key] = val
-    glog.V(10).Infof("Set value %f for key '%s'", val, key)
     return nil
 }
 

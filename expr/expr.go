@@ -6,7 +6,10 @@ import (
     "reflect"
 )
 
-type Context interface {}
+type Context interface {
+    GetVar(key string) (interface{}, bool)
+    SetVar(key string, val interface{})
+}
 
 type Executor interface {
     Get(key string, ctx Context) (float64, error)
@@ -17,6 +20,14 @@ type Expr interface {
     iExpr()
     Eval(Executor, Context) (interface{}, error)
 }
+
+var ErrParameterNumNotMatch  = fmt.Errorf("parameter number not match")
+var ErrKeyTypeNotString      = fmt.Errorf("key type not string")
+var ErrValueTypeNotMatch     = fmt.Errorf("value type not match")
+var ErrBoolTypeNotMatch      = fmt.Errorf("bool type not match")
+var ErrAssertFailed          = fmt.Errorf("assert failed")
+var ErrVarNotInitialized     = fmt.Errorf("var not initialized")
+var ErrAssignNonIdentifier   = fmt.Errorf("assign to non identifier")
 
 type Type int
 
@@ -73,25 +84,21 @@ func (ce *ConstVal) Eval(e Executor, ctx Context) (interface{}, error) {
     }
 }
 
-const (
-    Get = "get"
-    Set = "set"
-    Assert = "assert"
-    AssertEqual = "assert_equal"
-)
+type Identifier string
 
-type FuncExpr struct {
-    Name string
-    Parameters []Expr
+func NewIdentifier(i string) Identifier {
+    return Identifier(i)
 }
 
-func (fe *FuncExpr) iExpr() {}
+func (i Identifier) iExpr() {}
 
-var ErrParameterNumNotMatch = fmt.Errorf("parameter number not match")
-var ErrKeyTypeNotString     = fmt.Errorf("key type not string")
-var ErrValueTypeNotMatch    = fmt.Errorf("value type not match")
-var ErrBoolTypeNotMatch     = fmt.Errorf("bool type not match")
-var ErrAssertFailed         = fmt.Errorf("assert failed")
+func (i Identifier) Eval(e Executor, ctx Context) (interface{}, error) {
+    if val, ok := ctx.GetVar(string(i)); !ok {
+        return nil, ErrVarNotInitialized
+    } else {
+        return val, nil
+    }
+}
 
 func evalKey(expr Expr, e Executor, ctx Context) (string, error) {
     keyObj, err := expr.Eval(e, ctx)
@@ -128,6 +135,23 @@ func evalBoolean(expr Expr, e Executor, ctx Context) (bool, error) {
     }
     return b, nil
 }
+
+type FuncName string
+
+const (
+    Get FuncName = "get"
+    Set = "set"
+    Assert = "assert"
+    AssertEqual = "assert_equal"
+    Var = "$"
+)
+
+type FuncExpr struct {
+    Name FuncName
+    Parameters []Expr
+}
+
+func (fe *FuncExpr) iExpr() {}
 
 func (fe *FuncExpr) Eval(e Executor, ctx Context) (interface{}, error) {
     switch fe.Name {
@@ -194,6 +218,7 @@ const (
     GT
     GTLE
     EQ
+    Assign
 )
 
 type BinaryExpr struct {
@@ -203,6 +228,18 @@ type BinaryExpr struct {
 }
 
 func (be *BinaryExpr) Eval(e Executor, ctx Context) (interface{}, error) {
+    if be.Op == Assign {
+        if ident, isIdentifier := be.Left.(Identifier); !isIdentifier {
+            return nil, ErrAssignNonIdentifier
+        } else {
+            val, err := be.Right.Eval(e, ctx)
+            if err != nil {
+                return nil, err
+            }
+            ctx.SetVar(string(ident), val)
+            return val, nil
+        }
+    }
     lf, err := evalValue(be.Left, e, ctx)
     if err != nil {
         return nil, err
